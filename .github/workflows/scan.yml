@@ -80,6 +80,12 @@ jobs:
           path: run-report.md
           retention-days: 30
 
+      - name: Locked-term guard
+        # The ledger is data: a run that would commit a locked term fails here
+        # and commits nothing (DEFECTS.md v2-32).
+        if: steps.key.outputs.present == 'true'
+        run: node scripts/check-locked-terms.js
+
       - name: Commit ledger
         if: steps.key.outputs.present == 'true'
         run: |
