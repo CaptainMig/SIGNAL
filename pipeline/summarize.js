@@ -110,7 +110,7 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
     if (f.fidelity != null) fid.push(f.fidelity);
     v1.push(articleIntegrityV1(f, { thinBody: r.thinBody }));
     v2.push(articleIntegrityV2(f));
-    slamRows.push({ outlet: r.outlet || r.publication, flagged: !!r.slam?.matched, value: f.sens });
+    slamRows.push({ id: r.id, outlet: r.outlet || r.publication, flagged: !!r.slam?.matched, value: f.sens });
 
     if (r.escalation?.eligible) {
       esc.eligible++;

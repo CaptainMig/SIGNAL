@@ -35,9 +35,44 @@ phase that fixes it), **wontfix** (with the reason).
 | v2-20 | 2026-11-23 | `site/` | On a phone the deck is one long column of every panel; the four readouts that matter are buried. | **fixed** 2026-11-23 (phase 2, site PR) — mobile top tier is four readouts only (Framing Integrity, coverage, run health, change since previous run); everything else moves into expandable sections, collapsed by default on phones and open on desktop. |
 | v2-21 | 2026-11-23 | methodology | The model's verdicts have never been checked against human judgment, so agreement with a reviewer is unknown and the method page cannot say how reliable the scorer is. | **fixed** 2026-11-23 (phase 2, validation PR) — a blind labelling page on an unlisted route serves 100 headline + article pairs drawn from the ledger, stratified by model verdict, with no scores shown; a reviewer picks a verdict and the three axis scores; labels are stored in the repo; the method page reports model-vs-human and human-vs-human agreement (Cohen's kappa, per verdict) and states "Not yet validated against human reviewers." until at least two reviewers finish. |
 
+| v2-22 | 2026-11-23 | `pipeline/stats.js` `clusterBootstrap`, `permutationWithinOutlet` | Both resampling routines depended on input order: groups were consumed in Map insertion order and labels were shuffled in row-arrival order, so the same rows in a different order could give a different interval or p-value. During phase 2 an assertion comparing seeds 7 and 8 was removed and described as "flaky"; that description was wrong. The routines are seeded and were deterministic for a given input; the assertion had tested a property the API does not promise (that two seeds give different percentiles on a discrete resample distribution), and the latent order dependence went unaddressed. | **fixed** 2026-11-23 (determinism PR) — groups and members are put in a canonical order (by id, else value) before resampling; permutation rows are sorted by outlet, flag, value, id. Tests run each routine twice on unseeded-shuffled input and require identical output; the run summary is checked identical on reversed rows. |
+| v2-23 | 2026-11-23 | `test/scorecards.test.js` | Expected the strict shrunk rate 84.6; pipeline gave 85.3. | **fixed** 2026-11-23 — hand calculation below. |
+| v2-24 | 2026-11-23 | `test/summarize.test.js` | Expected `fi_v1` 62.5; pipeline gave 50. | **fixed** 2026-11-23 — hand calculation below. |
+| v2-25 | 2026-11-23 | `test/stats.test.js` | The "underpowered" case kept 12 rows (6 flagged, 6 rest), which is not underpowered at the minimum group size of 5. | **fixed** 2026-11-23 — the case keeps 8 rows (6 flagged, 2 rest). |
+| v2-26 | 2026-11-23 | `test/site-metrics.test.js` | Expected a one-day row sum of 410; pipeline gave 400. | **fixed** 2026-11-23 — hand calculation below. |
+| v2-27 | 2026-11-23 | `test/validation.test.js` | Expected the stratified draw to take 36 / 24 / 20 for VERIFIED / CONTEXTUAL / MISLEADING+PROVISIONAL; pipeline took 33 / 33 / 14. A second assertion compared two draws whose fixtures had different ids because a module counter was not reset. | **fixed** 2026-11-23 — hand calculation below; the fixture resets its counter. |
+
 Recorded because a test expectation that is wrong is exactly the bug this file
 exists to catch: in each case the pipeline value was verified by hand before
-the test was changed (v2-1 … v2-4). v2-5 … v2-8 came from code review of the
+the test was changed (v2-1 … v2-4, v2-23 … v2-27).
+
+### Hand calculations for v2-23 … v2-27
+
+**v2-23 — strict shrunk rate.** Pooled strict rate over every FI row in the
+7-day fixture: A 20 VERIFIED of 25, B 12 of 12, C 25 of 25 → 57 / 62 =
+0.9194. Shrinkage with 20 pseudo-rows: `(20 + 20 × 0.9194) / (25 + 20)` =
+`38.39 / 45` = 0.8531 → 85.3. Pipeline: 85.3. ✓ (The broad figure in the
+same test, `(23 + 20 × 60/62) / 45` = 0.9411 → 94.1, was already right.)
+
+**v2-24 — v1-compatible Framing Integrity.** Eight scored rows in the
+fixture. v1 counts VERIFIED, CONTEXTUAL and tone-only rows as good:
+VERIFIED (row 1), tone (row 4), CONTEXTUAL (row 6), VERIFIED full text
+(row 7) = 4. MISLEADING, CONTESTED, CONTESTED, CONTESTED are bad.
+`4 / 8` = 50. Pipeline: 50. ✓
+
+**v2-25 — underpowered permutation.** Minimum group size is 5. Twelve rows
+of one outlet are 6 flagged + 6 rest: both ≥ 5, so the test runs. Eight rows
+are 6 flagged + 2 rest: 2 < 5, underpowered. ✓
+
+**v2-26 — one-day row sum.** Both fixture runs in the 24-hour window carry
+`rows_total` 200: `200 + 200` = 400. Pipeline: 400. ✓
+
+**v2-27 — stratified draw.** Candidates after excluding tone-only, unscored
+and UNRESOLVED rows: VERIFIED 60, CONTEXTUAL 40, CONTESTED 8, UNVERIFIED 12,
+MISLEADING+PROVISIONAL 5 + 9 = 14. Targets of 20 give 20, 20, 8, 12, 14 =
+74. The 26 missing fill round-robin from the two strata with spare
+candidates: 13 each → VERIFIED 33, CONTEXTUAL 33. Pipeline: 33 / 33 / 8 /
+12 / 14. ✓ v2-5 … v2-8 came from code review of the
 phase 1 pull request; their `history.csv` columns are reserved now (written as
 empty until phase 2) so the frozen column set does not have to change later.
 

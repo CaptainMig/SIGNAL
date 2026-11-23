@@ -104,3 +104,12 @@ test('history and stats records fill every frozen column, matrix cells included'
   assert.equal(historyRecord({ ...run, summary: empty }).fi_v2_low, null);
   assert.equal(statsRecord({ ...run, summary: empty }).golden_alert, null);
 });
+
+test('the run summary is identical when the rows arrive in a different order', () => {
+  const a = summarizeRun({ rows: rows(), feeds, runId: 'r', extraction, golden, auditSampled: 1 });
+  const b = summarizeRun({ rows: rows().reverse(), feeds, runId: 'r', extraction, golden, auditSampled: 1 });
+  assert.deepEqual(b.framingIntegrity.broad.ci, a.framingIntegrity.broad.ci);
+  assert.deepEqual(b.framingIntegrity.strict.ci, a.framingIntegrity.strict.ci);
+  assert.deepEqual(b.slam.test, a.slam.test);
+  assert.deepEqual(b, a);
+});
