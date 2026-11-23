@@ -49,14 +49,15 @@ a:hover { color: var(--accent); }
 .chip.bad { border-color: var(--red); color: var(--red); }
 
 /* Layout */
-main { display: flex; flex-direction: column; gap: 20px; }
+main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.wrap > * { min-width: 0; }
 .row { display: flex; flex-wrap: wrap; gap: 20px; min-width: 0; }
 main > * { min-width: 0; }
 .panel { flex: 1 1 320px; min-width: 0; padding: 20px; border: 0.5px solid var(--hair); display: flex; flex-direction: column; gap: 14px; }
 .panel.wide { flex: 999 1 520px; gap: 18px; }
 .panel.full { flex: 1 1 100%; }
 @media (min-width: 640px) { .panel { padding: 24px; } }
-@media (max-width: 639px) { .row { flex-direction: column; } .panel { flex: 1 1 auto; } }
+@media (max-width: 639px) { .row { flex-direction: column; flex-wrap: nowrap; } .panel { flex: 1 1 auto; width: 100%; } }
 .panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: var(--muted); }
 .subhead { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 
