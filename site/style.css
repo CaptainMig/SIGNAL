@@ -82,6 +82,24 @@ main > * { min-width: 0; }
 .note { font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--muted); }
 .empty { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 16px 0; }
 
+/* Collapsible sections (details) */
+details.section { border: 0.5px solid var(--hair); padding: 0; }
+details.section > summary { list-style: none; cursor: pointer; padding: 16px 20px; }
+details.section > summary::-webkit-details-marker { display: none; }
+details.section > summary::before { content: '+'; display: inline-block; width: 14px; color: var(--muted); }
+details.section[open] > summary::before { content: '−'; }
+details.section .section-body { display: flex; flex-direction: column; gap: 14px; padding: 0 20px 20px; }
+@media (min-width: 640px) { details.section > summary { padding: 18px 24px; } details.section .section-body { padding: 0 24px 24px; } }
+
+/* Live TV */
+.tv-channels button { color: var(--muted); border-color: var(--hair); background: transparent; }
+.tv-channels button.remembered { color: var(--text); border-color: var(--text); }
+.tv-channels button.active { color: var(--ink); background: var(--text); border-color: var(--text); }
+.tv-stage { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
+.tv-box { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 0.5px solid var(--hair2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.tv-box iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.tv-idle { padding: 16px; text-align: center; }
+
 /* Verdict mix bar */
 .mix { display: flex; height: 28px; gap: 2px; }
 .mix > div { min-width: 0; }
