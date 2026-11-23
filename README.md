@@ -81,6 +81,9 @@ spent. A headline edit, prompt edit, or model change forces a fresh score.
 - `coverage_pct`: share of scored rows that carry article text.
 - Tokens, cost (estimated from the captured price table), feed health,
   escalation counts, slam index.
+- Reserved, empty until phase 2 (`DEFECTS.md` v2-5 to v2-8): outlets
+  qualifying for the balanced mean and the minimum n, the full
+  sweep × full-text escalation matrix, and the audit sample's overturn rate.
 
 ## Running
 

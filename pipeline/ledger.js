@@ -28,6 +28,11 @@ export const HISTORY_COLUMNS = [
   'slam_flagged', 'slam_index',
   'esc_eligible', 'esc_attempted', 'esc_confirmed', 'esc_cleared', 'esc_pending', 'esc_blocked', 'esc_timeout',
   'tokens_input', 'tokens_output', 'tokens_cache_read', 'tokens_cache_write', 'model_calls', 'cost_usd',
+  // Reserved for phase 2 (DEFECTS.md v2-5 … v2-8); written empty until then.
+  'fi_v2_outlets_qualified', 'fi_v2_outlet_min_n',
+  'esc_provisional_to_verified', 'esc_provisional_to_contextual', 'esc_provisional_to_contested', 'esc_provisional_to_unverifiable', 'esc_provisional_to_misleading',
+  'esc_contested_to_verified', 'esc_contested_to_contextual', 'esc_contested_to_contested', 'esc_contested_to_unverifiable', 'esc_contested_to_misleading',
+  'audit_sampled', 'audit_scored', 'audit_overturned', 'audit_overturn_pct',
 ];
 
 export function ledgerPaths(root = '.', dataDir = DATA_DIR) {

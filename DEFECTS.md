@@ -16,9 +16,16 @@ phase that fixes it), **wontfix** (with the reason).
 | v2-3 | 2026-11-23 | `test/run.test.js` | `--limit 2` test expected 2 model calls; pipeline made 3. The expectation forgot that one of the two rows is PROVISIONAL and is escalated to a full-text call. | **fixed** 2026-11-23 — hand calculation below. |
 | v2-4 | 2026-11-23 | `test/summarize.test.js` | Expected `mean_integrity_v2` of 44.9; pipeline gave 55.6. The expectation was computed over the wrong row set (a tone-only row has no v2 integrity and is excluded). | **fixed** 2026-11-23 — hand calculation below. |
 
+| v2-5 | 2026-11-23 | `pipeline/config.js`, `pipeline/integrity.js` `outletBalancedV2` | Outlet identity is the feed name. Washington Post, WaPo World, and WaPo Politics are three "publications" and BBC is two, so the outlet-balanced Framing Integrity counts WaPo three times and BBC twice. Same flaw in v1's scorecards. | **planned** phase 2 — add an `outlet` key per feed; group on it everywhere outlets are compared or ranked (balanced mean, scorecards, sparklines, within-outlet permutation, cluster bootstrap). `publication` stays on the row as the feed label. |
+| v2-6 | 2026-11-23 | `pipeline/integrity.js` `outletBalancedV2` | The outlet-balanced mean includes outlets with a single text row, so one headline can move the balanced number as much as an outlet with sixty. | **planned** phase 2 — minimum n per outlet (starting at 5); report how many outlets qualified (`fi_v2_outlets_qualified`, `fi_v2_outlet_min_n` reserved in `history.csv`). |
+| v2-7 | 2026-11-23 | `pipeline/escalate.js` `escalationOutcome` | The escalation outcome collapses to confirmed / cleared / pending and loses the full-text verdict: CONTESTED → MISLEADING and PROVISIONAL → CONTESTED are both recorded as "cleared". | **planned** phase 2 — store the full sweep-verdict × full-text-verdict matrix (`esc_<sweep>_to_<fulltext>` columns reserved); "cleared" means the full text returned VERIFIED or CONTEXTUAL, nothing else. |
+| v2-8 | 2026-11-23 | `pipeline/run.js` escalation | Sweep VERIFIED and CONTEXTUAL rows are never sent to full text, so the sweep's miss rate (distortion it fails to flag) is unmeasured. v1 had the same gap. | **planned** phase 2 — each run sends a seeded random sample of 5 sweep VERIFIED/CONTEXTUAL rows to full text, marked `audit: true` on the row and excluded from the escalation matrix; the overturn rate is published as telemetry (`audit_sampled`, `audit_scored`, `audit_overturned`, `audit_overturn_pct` reserved). |
+
 Recorded because a test expectation that is wrong is exactly the bug this file
 exists to catch: in each case the pipeline value was verified by hand before
-the test was changed.
+the test was changed (v2-1 … v2-4). v2-5 … v2-8 came from code review of the
+phase 1 pull request; their `history.csv` columns are reserved now (written as
+empty until phase 2) so the frozen column set does not have to change later.
 
 ### Hand calculations for v2-1 … v2-4
 

@@ -185,5 +185,23 @@ export function historyRecord(run) {
     tokens_cache_write: s.usage.cacheWrite,
     model_calls: s.usage.calls,
     cost_usd: s.costUsd,
+    // Reserved for phase 2 (DEFECTS.md v2-5 … v2-8). Empty until the outlet
+    // key, the full escalation matrix, and the audit sample exist.
+    fi_v2_outlets_qualified: null,
+    fi_v2_outlet_min_n: null,
+    esc_provisional_to_verified: null,
+    esc_provisional_to_contextual: null,
+    esc_provisional_to_contested: null,
+    esc_provisional_to_unverifiable: null,
+    esc_provisional_to_misleading: null,
+    esc_contested_to_verified: null,
+    esc_contested_to_contextual: null,
+    esc_contested_to_contested: null,
+    esc_contested_to_unverifiable: null,
+    esc_contested_to_misleading: null,
+    audit_sampled: null,
+    audit_scored: null,
+    audit_overturned: null,
+    audit_overturn_pct: null,
   };
 }
