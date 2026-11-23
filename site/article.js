@@ -30,13 +30,16 @@ export function renderArticle(data, id) {
     f.source === 'fulltext' ? 'FULL-TEXT VERDICT' : f.source === 'tone' ? 'HEADLINE ONLY · TONE SCORED · NO VERDICT' : f.source === 'unscored' ? `UNSCORED · ${esc(f.reason || '')}` : 'SWEEP VERDICT · HEADLINE + FEED SUMMARY';
   const fe = row.fulltextError;
   let fulltextState = '';
-  if (row.fulltext) {
+  if (row.escalation?.unresolved) {
+    const why = fe?.reason === 'blocked' ? 'SOURCE BLOCKED' : fe?.reason === 'timeout' ? 'TIMEOUT' : (fe?.reason || 'error').toUpperCase();
+    fulltextState = `<div class="note gold">UNRESOLVED — ${why} after ${esc(String(fe?.attempts || row.escalation.attempts))} attempts.</div><div class="note">The sweep flagged this row but the article could never be fetched. It is excluded from both Framing Integrity numbers and counted beside them.</div>`;
+  } else if (row.fulltext) {
     fulltextState = `<div class="kv-list">${kv('SCORED AGAINST', `${fmt.num(row.fulltext.chars)} EXTRACTED CHARACTERS`)}${kv('SWEEP SAID', row.sweep ? esc(verdictLabel(meta, row.sweep.verdict)) : '—')}${kv('ESCALATION', esc(String(row.escalation?.outcome || '—').toUpperCase()))}${row.fulltext.carriedFrom ? kv('CARRIED FROM RUN', esc(row.fulltext.carriedFrom)) : ''}</div>`;
   } else if (fe) {
     const label = fe.reason === 'blocked' ? `UNVERIFIABLE — SOURCE BLOCKED (${esc(fe.detail === 'stub' ? 'paywall or consent wall' : fe.detail)})` : fe.reason === 'timeout' ? 'FULL TEXT UNAVAILABLE — TIMEOUT (retried next run)' : `FULL TEXT UNAVAILABLE — ${esc(fe.reason)} ${esc(fe.detail || '')}`;
     fulltextState = `<div class="note gold">${label}</div><div class="note">${fe.reason === 'blocked' ? 'The publisher refuses automated retrieval, so this row cannot earn a full-text verdict. A property of the source, not a judgment on the outlet or the story.' : 'A transient failure. The next scheduled run tries again.'}</div>`;
   } else if (row.escalation?.eligible) {
-    fulltextState = `<div class="note">Flagged by the sweep; the full-text check is ${esc(row.escalation.outcome || 'pending')}.</div>`;
+    fulltextState = `<div class="note">Flagged by the sweep (${esc(String(row.escalation.reason || '').replace(/_/g, ' '))}); the full-text check is ${esc(row.escalation.outcome || 'pending')}${row.escalation.attempts ? ` after ${row.escalation.attempts} fetch attempt${row.escalation.attempts === 1 ? '' : 's'}` : ''}.</div>`;
   } else if (f.source === 'tone') {
     fulltextState = `<div class="note">This feed delivers no article text, so fidelity and the verdict are not scored. Only the two tone axes are.</div>`;
   } else {
@@ -56,6 +59,8 @@ export function renderArticle(data, id) {
       ${kv('V2 · 100 × F/10 × (1 − 0.25·S/10 − 0.25·C/10)', v2(f) == null ? '—' : fmt.num(v2(f), 1))}
       ${kv('V1 · 100 × (F + (10−S) + (10−C)) / 30', v1(f, row.thinBody) == null ? '—' : v1(f, row.thinBody))}
       ${kv('SLAM', row.slam?.matched ? `<span class="red">${esc(row.slam.term)} · ${esc(row.slam.tier)}</span>` : 'no slam verb')}
+      ${row.audit ? kv('AUDIT SAMPLE', `drawn in run ${esc(row.auditSampledIn || '—')} · ${row.auditOutcome?.scored ? (row.auditOutcome.overturned ? '<span class="red">OVERTURNED</span>' : row.auditOutcome.changed ? 'CHANGED' : 'UPHELD') : 'not scored'}`) : ''}
+      ${kv('OUTLET', esc(row.outlet || row.publication))}
       ${kv('MODEL · PROMPT', `${esc((row.fulltext || row.sweep)?.model || '—')} · ${esc((row.fulltext || row.sweep)?.promptHash || '—')}`)}
       ${kv('SCORED AT', esc((row.fulltext || row.sweep)?.at || '—'))}
       ${kv('ROW ID', esc(row.id))}
