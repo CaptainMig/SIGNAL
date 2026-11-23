@@ -50,10 +50,73 @@ export const MAX_ITEM_AGE_HOURS = 48;
 export const MIN_HEADLINE_CHARS = 15;
 
 // Full-text extraction (escalation).
-export const EXTRACT_TIMEOUT_MS = 30_000; // raised from 20s: WaPo article fetches timed out in the first live run
+// Default per-attempt timeout; a feed can override it with `extractTimeoutMs`
+// (the Washington Post answers in about a second or tarpits forever, so its
+// feeds use a short one — DEFECTS.md v2-34).
+export const EXTRACT_TIMEOUT_MS = 20_000;
 export const EXTRACT_CONCURRENCY = 2;
 export const EXTRACT_MIN_CHARS = 400; // below this the page is a stub (paywall / consent shell)
 export const EXTRACT_MAX_CHARS = 12_000;
+
+// Fetch identities for article pages, tried in order (pipeline/extract.js).
+// The first is a complete Chrome header set: the bare user agent alone is
+// tarpitted by at least one publisher. The second is a different browser
+// family, the "retry with a different user agent".
+export const EXTRACT_IDENTITIES = [
+  {
+    key: 'chrome',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
+    },
+  },
+  {
+    key: 'firefox',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Upgrade-Insecure-Requests': '1',
+    },
+  },
+];
+
+// Hosts the Vercel-side fetch route (api/fetch-article.js) will fetch from:
+// the publishers in FEEDS and nothing else, so the route is never an open
+// proxy. Matched on the registrable domain.
+export const ARTICLE_HOSTS = [
+  'apnews.com',
+  'reuters.com',
+  'washingtonpost.com',
+  'bbc.com',
+  'bbc.co.uk',
+  'npr.org',
+  'foxnews.com',
+  'cbsnews.com',
+  'go.com',
+  'nbcnews.com',
+  'cnn.com',
+  'cnbc.com',
+  'thehill.com',
+  'politico.com',
+  'theguardian.com',
+  'wsj.com',
+  'nytimes.com',
+  'latimes.com',
+  'nypost.com',
+  'sky.com',
+  'fortune.com',
+  'ft.com',
+];
 
 // Body budgets sent to the model, by mode.
 export const BODY_CHARS = { sweep: 1200, fulltext: 8000, tone: 0 };
@@ -83,9 +146,12 @@ export const FEEDS = [
     url: 'https://news.google.com/rss/search?q=site:reuters.com+when:1d&hl=en-US&gl=US&ceid=US:en',
     thinBody: true,
   },
-  { name: 'Washington Post', outlet: 'Washington Post', owner: 'Jeff Bezos / Nash Holdings', url: 'https://feeds.washingtonpost.com/rss/national' },
-  { name: 'WaPo World', outlet: 'Washington Post', owner: 'Jeff Bezos / Nash Holdings', url: 'https://feeds.washingtonpost.com/rss/world' },
-  { name: 'WaPo Politics', outlet: 'Washington Post', owner: 'Jeff Bezos / Nash Holdings', url: 'https://feeds.washingtonpost.com/rss/politics' },
+  { name: 'Washington Post', outlet: 'Washington Post',
+    extractTimeoutMs: 12_000, owner: 'Jeff Bezos / Nash Holdings', url: 'https://feeds.washingtonpost.com/rss/national' },
+  { name: 'WaPo World', outlet: 'Washington Post',
+    extractTimeoutMs: 12_000, owner: 'Jeff Bezos / Nash Holdings', url: 'https://feeds.washingtonpost.com/rss/world' },
+  { name: 'WaPo Politics', outlet: 'Washington Post',
+    extractTimeoutMs: 12_000, owner: 'Jeff Bezos / Nash Holdings', url: 'https://feeds.washingtonpost.com/rss/politics' },
   { name: 'BBC News', outlet: 'BBC', owner: 'BBC / UK Public', url: 'https://feeds.bbci.co.uk/news/rss.xml' },
   { name: 'BBC World', outlet: 'BBC', owner: 'BBC / UK Public', url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
   { name: 'NPR News', outlet: 'NPR', owner: 'NPR / Public', url: 'https://feeds.npr.org/1001/rss.xml' },

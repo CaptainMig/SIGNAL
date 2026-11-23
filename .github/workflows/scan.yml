@@ -64,6 +64,11 @@ jobs:
         if: steps.key.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Optional second fetch route from the Vercel deployment
+          # (api/fetch-article.js): the function URL as a repository variable,
+          # the shared token as a secret and as SIGNAL_FETCH_TOKEN in Vercel.
+          SIGNAL_FETCH_URL: ${{ vars.SIGNAL_FETCH_URL }}
+          SIGNAL_FETCH_TOKEN: ${{ secrets.SIGNAL_FETCH_TOKEN }}
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             node scripts/scan.js --dry-run --report run-report.md

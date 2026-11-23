@@ -15,6 +15,7 @@
 import { promises as fs } from 'node:fs';
 import { runScan, REUSE_WINDOW_HOURS } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
+import { createRemoteFetch } from '../pipeline/extract.js';
 import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
 import { updateDaily } from '../pipeline/daily.js';
 import { refreshAgreement } from '../pipeline/validation.js';
@@ -78,7 +79,15 @@ export function renderReport({ run, rows, scorer, paths }) {
   L.push(`Framing Integrity · broad ${fmtRange(fi.broad?.low, fi.broad?.high)}% (95% CI ${fmtRange(fi.broad?.ci?.lo, fi.broad?.ci?.hi)}, balanced ${fi.broad?.balanced?.value ?? '—'}% over ${fi.broad?.balanced?.qualified ?? 0} outlets) · strict ${fmtRange(fi.strict?.low, fi.strict?.high)}% (95% CI ${fmtRange(fi.strict?.ci?.lo, fi.strict?.ci?.hi)}) · n ${fi.broad?.n ?? 0} · unresolved ${fi.unresolved ?? 0} · v1 ${fi.v1 ?? '—'}% · coverage ${s.coverage ?? '—'}%`);
   L.push(`Escalation: ${s.escalation.eligible} eligible · ${s.escalation.attempted} attempted · ${s.escalation.confirmed} confirmed · ${s.escalation.cleared} cleared · ${s.escalation.reclassified} reclassified · ${s.escalation.pending} pending · ${s.escalation.unresolved} unresolved (${s.escalation.blocked} blocked, ${s.escalation.timeout} timeout)`);
   L.push(`Audit: ${s.audit.sampledThisRun} sampled this run · ${s.audit.present} present · ${s.audit.scored} scored · ${s.audit.overturned} overturned (${s.audit.overturnPct ?? '—'}%) · ${s.audit.changed} changed`);
-  L.push(`Extraction: ${s.extraction.successes}/${s.extraction.attempts} fetched (${s.extraction.successPct ?? '—'}%)`);
+  const ex = s.extraction;
+  const bag = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '—';
+  L.push(`Extraction: ${ex.successes}/${ex.attempts} fetched (${ex.successPct ?? '—'}%) · ${ex.skipped?.video ?? 0} video page(s) skipped · routes: ${bag(ex.routes)} · failures: ${bag(ex.reasons)} · remote route ${ex.remote || 'not configured'}`);
+  L.push('');
+  L.push('| Outlet | Fetched / attempts | % | Failures | Routes |');
+  L.push('|---|---|---|---|---|');
+  for (const [o, v] of Object.entries(ex.byOutlet || {}).sort((a, b) => b[1].attempts - a[1].attempts)) {
+    L.push(`| ${o} | ${v.successes} / ${v.attempts} | ${v.successPct ?? '—'} | ${bag(v.reasons)} | ${bag(v.routes)} |`);
+  }
   if (s.slam.test) {
     const t = s.slam.test;
     L.push(`Slam: index ${s.slam.index ?? '—'}% · ${t.underpowered ? `underpowered (${t.nFlagged} flagged)` : `gap ${t.observedDiff} (CI ${fmtRange(t.ci.lo, t.ci.hi)}), p = ${t.p}, within-outlet permutation, consistency check`}`);
@@ -145,7 +154,12 @@ async function main() {
     }
   }
 
-  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex });
+  // The Vercel-side fetch route, when the deployment is configured for it
+  // (SIGNAL_FETCH_URL + SIGNAL_FETCH_TOKEN). Absent, the runner is the only
+  // route and the run says so.
+  const remoteFetch = createRemoteFetch({ url: process.env.SIGNAL_FETCH_URL, token: process.env.SIGNAL_FETCH_TOKEN });
+  log(`[signal] remote fetch route: ${remoteFetch ? 'configured' : 'not configured'}`);
+  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex, remoteFetch });
 
   const paths = [];
   paths.push(await writeScan(run, delta, { root }));

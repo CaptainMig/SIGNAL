@@ -69,7 +69,7 @@ test('a full run: rows, modes, escalation outcomes, finals, summary', async () =
   assert.ok(!serialized.includes('The Senate passed the budget bill 52'), 'feed summary must not be stored');
   assert.ok(!serialized.includes('late-night session that stretched'), 'extracted article text must not be stored');
   assert.ok(!serialized.includes('Subscribe to continue'), 'stub text must not be stored');
-  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome'];
+  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction'];
   for (const r of rows) for (const k of Object.keys(r)) assert.ok(ALLOWED.includes(k), `unexpected row field ${k}`);
   const SCORE_KEYS = ['mode', 'verdict', 'fidelity', 'sens', 'click', 'rationale', 'provisional', 'model', 'promptHash', 'usage', 'latencyMs', 'at', 'chars', 'carriedFrom'];
   for (const r of rows) for (const s of [r.sweep, r.fulltext]) if (s) for (const k of Object.keys(s)) assert.ok(SCORE_KEYS.includes(k), `unexpected score field ${k}`);
@@ -272,4 +272,38 @@ test('golden set is scored on its cadence and compared with the baseline', async
   const skipped = await runScan({ scorer: createScorer({ client: model(), model: 'claude-sonnet-5-5', now }), fetch: network(), now, feeds: FEEDS, model: 'claude-sonnet-5-5', auditSize: 0, golden: { set, baseline, every: 24 }, runIndex: 5 });
   assert.equal(skipped.goldenReport, null);
   assert.equal(skipped.run.summary.golden, null);
+});
+
+test('video pages are never fetched; the remote route is tried when the runner is refused and recorded', async () => {
+  const { remoteWorthTrying } = await import('../pipeline/run.js');
+  assert.equal(remoteWorthTrying({ ok: false, reason: 'blocked', detail: 'HTTP 403' }), true);
+  assert.equal(remoteWorthTrying({ ok: false, reason: 'timeout' }), true);
+  assert.equal(remoteWorthTrying({ ok: false, reason: 'blocked', detail: 'paywall' }), false);
+  assert.equal(remoteWorthTrying({ ok: false, reason: 'no_article' }), false);
+  assert.equal(remoteWorthTrying({ ok: true }), false);
+  const feed = `<rss><channel>
+    <item><title>Mayor slams council over transit vote delay again</title><link>https://example-c.com/news/transit</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>The mayor criticised the council.</description></item>
+    <item><title>Mayor slams critics in a video statement tonight</title><link>https://example-c.com/video/statement</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>Video.</description></item>
+  </channel></rss>`;
+  const fetch = mockFetch({ 'https://feed-c/': { status: 200, body: feed }, 'https://example-c.com/news/transit': { status: 403, body: '' } });
+  const remoteCalls = [];
+  const remoteFetch = async (url) => {
+    remoteCalls.push(url);
+    return { ok: true, text: fixture('article.html').replace(/<[^>]+>/g, ' ').slice(0, 3000), chars: 3000, title: 'T', httpStatus: 200, route: 'vercel', attempts: 1, ms: 5 };
+  };
+  const scorer = createScorer({ client: model(), model: 'claude-sonnet-5-5', now });
+  const feeds = [{ name: 'C', outlet: 'Outlet C', owner: 'O', url: 'https://feed-c/', extractTimeoutMs: 500 }];
+  const { rows, run } = await runScan({ scorer, fetch, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0, remoteFetch });
+  const video = rows.find((r) => r.link.includes('/video/'));
+  assert.deepEqual([video.fulltextError.reason, video.fulltextError.detail, video.escalation.unresolved], ['no_article', 'video page', true]);
+  assert.ok(!fetch.calls.includes('https://example-c.com/video/statement'), 'never fetched');
+  const text = rows.find((r) => r.link.includes('/news/'));
+  assert.deepEqual(remoteCalls, ['https://example-c.com/news/transit']);
+  assert.equal(text.fulltext.verdict, 'MISLEADING');
+  assert.deepEqual(text.extraction, { route: 'vercel', tried: ['runner', 'alt-identity', 'vercel'], fetches: 3, ms: 5, source: 'markup' });
+  const ex = run.summary.extraction;
+  assert.deepEqual([ex.attempts, ex.successes, ex.skipped.video, ex.remote], [1, 1, 1, 'configured']);
+  assert.deepEqual(ex.routes, { vercel: 1 });
+  assert.deepEqual(ex.byOutlet['Outlet C'].routes, { vercel: 1 });
+  assert.equal(run.summary.escalation.noArticle, 1);
 });

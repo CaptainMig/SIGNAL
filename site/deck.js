@@ -87,7 +87,9 @@ function topTier(ctx) {
   const nText = broad?.n ?? fi.v2N;
   const covSub = `<div><b>${nText}</b> WITH ARTICLE TEXT OF <b>${s.rows.scored}</b> SCORED</div><div>${s.rows.headlineOnly} HEADLINE ONLY · ${s.rows.fulltext} FULL TEXT · ${fi.unresolved ?? 0} UNRESOLVED (COUNTED, NOT SCORED)</div>`;
   const f = s.feeds;
-  const healthSub = `<div>${s.rows.total} ROWS · ${s.rows.unscored} UNSCORED · ${fmt.secs(latest.durationMs)} s</div><div>${fmt.usd(s.costUsd)} · ${s.usage.calls} CALLS · ${f.blocked ?? 0} BLOCKED · ${f.dead} DEAD</div>`;
+  const ex = s.extraction;
+  const exLine = ex && ex.attempts ? `EXTRACTION <b>${fmt.pct(ex.successPct)}</b> · ${ex.successes}/${ex.attempts}` : 'EXTRACTION · NO FETCHES THIS RUN';
+  const healthSub = `<div>${s.rows.total} ROWS · ${s.rows.unscored} UNSCORED · ${fmt.secs(latest.durationMs)} s</div><div>${fmt.usd(s.costUsd)} · ${s.usage.calls} CALLS · ${f.blocked ?? 0} BLOCKED · ${f.dead} DEAD</div><div>${exLine}</div>`;
   const ch = changeSince(ctx.latestRow, ctx.previousRow);
   const signed = (v, suffix = ' PT') => (v == null ? '—' : `${v > 0 ? '+' : ''}${v}${suffix}`);
   const changeValue = ch ? (ch.broadMid == null ? '—' : `${ch.broadMid > 0 ? '+' : ''}${ch.broadMid}<span class="unit"> PT</span>`) : 'FIRST<span class="unit"> RUN</span>';
@@ -176,12 +178,13 @@ export function historyChart(merged, win, def) {
 // --- Run health detail ------------------------------------------------------
 
 function runHealthDetail(ctx) {
-  const { latest } = ctx;
+  const { latest, merged } = ctx;
   const s = latest.summary;
   const f = s.feeds;
   const stat = (v, unit, l) => `<div><div class="v">${v}${unit ? `<span class="unit">${unit}</span>` : ''}</div><div class="l">${l}</div></div>`;
   const ex = s.extraction;
-  return `<div class="row">
+  const ex7 = { attempts: windowSum(merged, 'extract_attempts', 7), successes: windowSum(merged, 'extract_successes', 7) };
+  return `${extractionPanel(ex)}<div class="row">
     <div class="panel" style="border:0;padding:0">
       <div class="stat-grid">
         ${stat(f.live, `/${f.total}`, 'FEEDS LIVE')}
@@ -196,13 +199,45 @@ function runHealthDetail(ctx) {
         ${kv('SWEEP (FEED SUMMARY)', s.rows.feedSummary)}
         ${kv('HEADLINE ONLY', s.rows.headlineOnly)}
         ${kv('STALE / BLOCKED / DEAD', `<span class="gold">${f.stale}</span> / <span class="gold">${f.blocked ?? 0}</span> / <span class="red">${f.dead}</span>`)}
-        ${kv('EXTRACTION SUCCESS', ex ? `${ex.successes}/${ex.attempts} · ${fmt.pct(ex.successPct)}` : pending())}
+        ${kv('EXTRACTION SUCCESS · THIS RUN', ex ? `${ex.successes}/${ex.attempts} · ${fmt.pct(ex.successPct)}` : pending())}
+        ${kv('EXTRACTION SUCCESS · 7D', ex7.attempts ? `${ex7.successes}/${ex7.attempts} · ${fmt.pct((100 * ex7.successes) / ex7.attempts)}` : '—')}
         ${kv('TOKENS · COST', `${fmt.num(s.usage.input + s.usage.output)} · ${fmt.usd(s.costUsd)}`)}
         ${kv('CACHE READ · CALLS', `${fmt.num(s.usage.cacheRead)} · ${s.usage.calls}`)}
         ${kv('MODEL', esc(latest.model))}
         ${kv('PROMPT HASH · SWEEP / FULL TEXT', `${esc(latest.promptHashes?.sweep || '—')} / ${esc(latest.promptHashes?.fulltext || '—')}`)}
       </div>
     </div>
+  </div>`;
+}
+
+// Extraction success by outlet, with failure reasons and winning routes.
+// Rows are sorted by attempts; the target line names the operator's bar.
+export const EXTRACTION_TARGET_PCT = 85;
+const REASON_LABELS = { 'blocked:HTTP 403': 'REFUSED 403', 'blocked:HTTP 401': 'REFUSED 401', 'blocked:HTTP 451': 'REFUSED 451', 'blocked:paywall': 'PAYWALL TEASER', 'blocked:consent wall': 'CONSENT WALL', 'blocked:stub': 'STUB', 'no_article:video page': 'VIDEO PAGE', timeout: 'TIMEOUT', error: 'ERROR', blocked: 'BLOCKED' };
+const ROUTE_SHORT = { runner: 'RUNNER', 'alt-identity': '2ND IDENTITY', 'consent-cookie': 'CONSENT', alternate: 'TEXT RENDERING', vercel: 'VERCEL' };
+const bagText = (o, labels) =>
+  Object.entries(o || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${esc(labels[k] || k.toUpperCase())} ${v}`)
+    .join(' · ') || '—';
+
+export function extractionPanel(ex) {
+  if (!ex) return `<div class="note">EXTRACTION BY OUTLET ${pending()}</div>`;
+  const outlets = Object.entries(ex.byOutlet || {}).sort((a, b) => b[1].attempts - a[1].attempts || (a[0] < b[0] ? -1 : 1));
+  const pct = ex.successPct;
+  const color = pct == null ? '' : pct >= EXTRACTION_TARGET_PCT ? '#6fd49a' : pct >= 70 ? '#c8971f' : '#f08080';
+  const rows = outlets
+    .map(([o, v]) => {
+      const c = v.successPct == null ? '' : v.successPct >= EXTRACTION_TARGET_PCT ? '#6fd49a' : v.successPct >= 50 ? '#c8971f' : '#f08080';
+      return `<tr><td class="l">${esc(o)}</td><td>${v.successes}/${v.attempts}</td><td style="color:${c}">${fmt.pct(v.successPct)}</td><td class="l muted">${bagText(v.reasons, REASON_LABELS)}</td><td class="l muted">${bagText(v.routes, ROUTE_SHORT)}</td></tr>`;
+    })
+    .join('');
+  const skipped = ex.skipped?.video || 0;
+  return `<div style="display:flex;flex-direction:column;gap:10px">
+    <div class="hero" style="gap:10px"><div class="mid" style="color:${color}">${pct == null ? '—' : fmt.num(pct, 0)}<span class="unit">%</span></div><div class="note">ARTICLE TEXT EXTRACTED · THIS RUN<br>${ex.successes} OF ${ex.attempts} FETCHES · TARGET ≥ ${EXTRACTION_TARGET_PCT}% · ${skipped} VIDEO PAGE${skipped === 1 ? '' : 'S'} SKIPPED (NO ARTICLE TEXT, COUNTED BESIDE)</div></div>
+    <div class="note">FAILURES · ${bagText(ex.reasons, REASON_LABELS)}</div>
+    <div class="note">ROUTES THAT SUCCEEDED · ${bagText(ex.routes, ROUTE_SHORT)} · SECOND NETWORK ROUTE ${esc(String(ex.remote || 'not configured').toUpperCase())}</div>
+    ${outlets.length ? `<div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">OUTLET</th><th>FETCHED</th><th>RATE</th><th class="l">FAILURES</th><th class="l">ROUTES</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="note">NO FETCHES THIS RUN</div>`}
   </div>`;
 }
 

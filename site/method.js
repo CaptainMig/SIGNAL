@@ -44,7 +44,7 @@ export function renderMethod(data) {
       <ul>
         <li>Headline-only scoring can never emit MISLEADING. A sweep MISLEADING is held as PROVISIONAL until the full text confirms or clears it.</li>
         <li>UNVERIFIED is displayed as UNVERIFIABLE: the claim could not be verified from what the article gives.</li>
-        <li>When the article cannot be fetched, the row says why: SOURCE BLOCKED (the publisher refuses automated retrieval, or serves a paywall shell) or TIMEOUT (transient, retried).</li>
+        <li>When the article cannot be fetched, the row says why: SOURCE BLOCKED (the publisher refuses automated retrieval, or serves a server-truncated paywall teaser, a consent wall, or a stub), TIMEOUT (transient, retried on later runs), or NO ARTICLE TEXT (a video page, never fetched). Each fetch tries a chain of routes before giving up: the runner with a full browser header set, a second browser identity, the publisher's own consent acceptance where one exists, the publisher's text rendering where one exists, and a second network route when configured. The route that succeeded is recorded on the row and the success rate by outlet is published in run health.</li>
         <li>A failed scoring call is UNSCORED and excluded from every number. A default is never presented as a score.</li>
       </ul>
       <h2>FRAMING INTEGRITY</h2>

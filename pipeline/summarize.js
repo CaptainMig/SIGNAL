@@ -66,6 +66,7 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
     unresolved: 0,
     blocked: 0,
     timeout: 0,
+    noArticle: 0,
     error: 0,
     byReason: { provisional: 0, contested: 0, low_fidelity_contextual: 0 },
     bySweep: Object.fromEntries(SWEEP_FLAGS.map((s) => [s, Object.fromEntries(OUTCOMES.map((o) => [o, 0]))])),
@@ -128,6 +129,7 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
       if ((outcome === 'pending' || outcome === 'unresolved') && r.fulltextError) {
         if (r.fulltextError.reason === 'blocked') esc.blocked++;
         else if (r.fulltextError.reason === 'timeout') esc.timeout++;
+        else if (r.fulltextError.reason === 'no_article') esc.noArticle++;
         else esc.error++;
       }
     }
@@ -182,6 +184,12 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
     successes: ext.successes,
     successPct: ext.attempts ? round1((100 * ext.successes) / ext.attempts) : null,
     byOutlet: Object.fromEntries(Object.entries(ext.byOutlet || {}).map(([o, v]) => [o, { ...v, successPct: v.attempts ? round1((100 * v.successes) / v.attempts) : null }])),
+    // Failure reasons and winning routes across the run; video pages are
+    // skipped before any attempt and counted beside the rate.
+    reasons: ext.reasons || {},
+    routes: ext.routes || {},
+    skipped: ext.skipped || { video: 0 },
+    remote: ext.remote || 'not configured',
   };
 
   return {
