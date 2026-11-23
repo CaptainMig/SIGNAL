@@ -3,6 +3,7 @@
 // server-side (intervals, golden set, audit, rolling 7-day scorecards) is
 // marked PENDING, never faked.
 import { esc, fmt, pending, pill, verdictColor, verdictLabel, panelHead, kv, groupBy, mean, scoreColor } from './ui.js';
+import { renderTvSection, wireTv } from './tv.js';
 
 const DAY = 86400e3;
 
@@ -13,6 +14,7 @@ export function renderDeck(data) {
   }
   return [
     `<section class="row" id="deck">${framingPanel(data)}${runHealthPanel(data)}</section>`,
+    renderTvSection(),
     `<section class="row">${escalationPanel(data)}${goldenPanel()}${slamPanel(data)}</section>`,
     `<section class="row">${toneMapPanel(data)}${toneByHourPanel(data)}</section>`,
     `<section class="row">${outletsPanel(data)}</section>`,
@@ -20,6 +22,7 @@ export function renderDeck(data) {
 }
 
 export function wireDeck(root, data) {
+  wireTv(root);
   const toggle = root.querySelector('[data-history-toggle]');
   if (!toggle) return;
   toggle.addEventListener('click', (e) => {
