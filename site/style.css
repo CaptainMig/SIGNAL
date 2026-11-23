@@ -82,6 +82,19 @@ main > * { min-width: 0; }
 .note { font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--muted); }
 .empty { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 16px 0; }
 
+/* Top tier: four readouts, always visible */
+.tier { display: grid; grid-template-columns: 1fr; gap: 20px; }
+@media (min-width: 640px) { .tier { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .tier { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.readout { border: 0.5px solid var(--hair); padding: 20px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.readout-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: var(--muted); }
+.readout-value { font-family: var(--display); font-weight: 400; font-size: 44px; line-height: 1; }
+.readout-value .unit { font-size: 0.45em; color: var(--muted); }
+.readout-sub { font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--muted); }
+.readout-sub b { color: var(--text); font-weight: 500; }
+.readout-sub .definition { font-family: var(--sans); font-size: 13px; line-height: 1.45; color: var(--text); margin-bottom: 6px; }
+@media (min-width: 1024px) { .tier .readout:first-child { grid-column: span 2; } .tier .readout:first-child .readout-value { font-size: 64px; } }
+
 /* Collapsible sections (details) */
 details.section { border: 0.5px solid var(--hair); padding: 0; }
 details.section > summary { list-style: none; cursor: pointer; padding: 16px 20px; }
@@ -89,6 +102,8 @@ details.section > summary::-webkit-details-marker { display: none; }
 details.section > summary > span:first-child::before { content: '+'; display: inline-block; width: 14px; color: var(--muted); }
 details.section[open] > summary > span:first-child::before { content: '−'; }
 details.section .section-body { display: flex; flex-direction: column; gap: 14px; padding: 0 20px 20px; }
+details.section .section-body > .row { width: 100%; }
+details.section .section-body .panel { flex: 1 1 320px; }
 @media (min-width: 640px) { details.section > summary { padding: 18px 24px; } details.section .section-body { padding: 0 24px 24px; } }
 
 /* Live TV */
