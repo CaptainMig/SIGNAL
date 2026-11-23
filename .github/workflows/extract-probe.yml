@@ -1,0 +1,44 @@
+# Extraction probe: a manual diagnostic. Retries the full-text fetches that
+# failed in the current ledger view with several fetch strategies from the
+# GitHub runner and reports which would have succeeded. No key, no tokens,
+# nothing written to the ledger; the report lands in the job summary.
+name: extract-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      per_outlet:
+        description: 'Failed rows to probe per outlet'
+        type: number
+        default: 4
+      timeout_ms:
+        description: 'Per-attempt timeout (ms)'
+        type: number
+        default: 20000
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Probe
+        run: |
+          node scripts/probe-extract.js --per-outlet "${{ inputs.per_outlet }}" --timeout "${{ inputs.timeout_ms }}" --report probe-report.md
+          cat probe-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-report-${{ github.run_id }}
+          path: probe-report.md
+          retention-days: 14
