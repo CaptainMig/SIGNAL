@@ -11,6 +11,7 @@
 // PENDING, never a placeholder number.
 import { esc, fmt, pending, verdictColor, verdictLabel, panelHead, kv, groupBy, mean, sparkline } from './ui.js';
 import { renderTvSection, wireTv } from './tv.js';
+import { renderToneSection, wireTone } from './tone.js';
 import { changeSince, historySeries, latestAndPrevious, mergeStats, windowRuns, windowSum } from './metrics.js';
 
 const DAY = 86400e3;
@@ -39,13 +40,14 @@ export function renderDeck(data) {
     renderTvSection(),
     section('escalation', 'ESCALATION & AUDIT', 'SWEEP × FULL TEXT · THIS RUN AND 7D', escalationBody(ctx)),
     `<section class="row">${goldenPanel(ctx)}${slamPanel(ctx)}</section>`,
-    section('tone', 'TONE', 'SENSATIONALISM × CLICKBAIT · BY HOUR', `<div class="row">${toneMapPanel(ctx)}${toneByHourPanel(ctx)}</div>`),
+    section('tone', 'TONE', 'MAP · TRAIL · BY HOUR', `<div class="row">${renderToneSection(ctx)}${toneByHourPanel(ctx)}</div>`),
     section('outlets', 'OUTLETS · ROLLING 7D', `RANKED AT n ≥ ${latest.scorecards?.minN ?? 20} WITH TEXT AND ≥ ${latest.scorecards?.minDays ?? 3} DAYS · SHRUNK TOWARD POOLED RATE`, outletsBody(ctx)),
   ].join('');
 }
 
 export function wireDeck(root, data) {
   wireTv(root);
+  wireTone(root, data);
   const toggle = root.querySelector('[data-history-toggle]');
   if (toggle) {
     const state = { win: '30d', def: 'broad' };
@@ -308,22 +310,6 @@ function slamPanel(ctx) {
 }
 
 // --- Tone -------------------------------------------------------------------
-
-function toneMapPanel(ctx) {
-  const { latest, meta } = ctx;
-  const rows = latest.rows.filter((r) => r.final && r.final.sens != null && r.final.click != null);
-  const dots = rows.map((r, i) => {
-    const jx = ((i * 37) % 7) - 3;
-    const jy = ((i * 53) % 7) - 3;
-    return `<div class="dot" style="left:calc(${(r.final.sens * 9.4 + 2).toFixed(1)}% + ${jx}px);bottom:calc(${(r.final.click * 9.4 + 2).toFixed(1)}% + ${jy}px);background:${verdictColor(meta, r.final.verdict)}" title="${esc(r.title)} · ${esc(verdictLabel(meta, r.final.verdict))} · S${r.final.sens} C${r.final.click}"></div>`;
-  }).join('');
-  return `<div class="panel" style="border:0;padding:0">
-    ${panelHead('TONE MAP · SENSATIONALISM × CLICKBAIT', `n ${rows.length}`)}
-    <div class="scatter" role="img" aria-label="Scatter of ${rows.length} headlines by sensationalism and clickbait, colored by verdict">${dots}</div>
-    <div class="axis"><span>0</span><span>SENSATIONALISM →</span><span>10</span></div>
-    <div class="note">VERTICAL AXIS: CLICKBAIT 0–10 · DOT COLOR = VERDICT · GREY = TONE ONLY · COUNT-SIZED DOTS AND THE 30-DAY TONE TRAIL ARE QUEUED</div>
-  </div>`;
-}
 
 function toneByHourPanel(ctx) {
   const rows = ctx.latest.rows.filter((r) => r.final && r.final.sens != null && r.pubDate);

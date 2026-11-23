@@ -203,3 +203,18 @@ th.sortable:hover { color: var(--text); }
 .validate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .validate-actions button { background: transparent; border: 0.5px solid var(--hair); color: var(--text); font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; padding: 10px 14px; min-height: 44px; cursor: pointer; }
 .validate-actions button.primary { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+
+/* Tone map and trail */
+.tone-wrap { flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.tone-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.tone-controls input[type=range] { accent-color: var(--accent); min-width: 120px; }
+.tone-svg { width: 100%; height: auto; display: block; background: transparent; }
+.tone-dot { cursor: pointer; }
+.tone-outlets { align-items: center; }
+.tone-outlet { display: inline-flex; align-items: stretch; }
+.tone-outlet button.active { background: var(--text) !important; color: var(--ink) !important; }
+.tone-outlet .star { border-left: 0; padding: 5px 7px; color: var(--muted); }
+.tone-outlet .star.on { color: var(--gold); }
+.tone-headlines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.tone-headlines a { text-decoration: none; }
+.tone-headlines a:hover { text-decoration: underline; }

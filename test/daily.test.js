@@ -4,10 +4,11 @@ import { dayOf, summarizeDay, updateDaily } from '../pipeline/daily.js';
 
 const row = (id, outlet, sens, click, verdict, pubDate, model = 'm1', promptHash = 'p1') => ({
   id,
+  title: `Headline ${id}`,
   outlet,
   publication: outlet,
   pubDate,
-  sweep: { model, promptHash },
+  sweep: { mode: 'sweep', model, promptHash },
   final: { verdict, fidelity: 8, sens, click, source: 'sweep' },
   escalation: { eligible: false, unresolved: false },
 });
@@ -34,6 +35,22 @@ test('summarizeDay: centroid, per-outlet centroids, grid with dominant verdict, 
   assert.deepEqual(d.grid[0], { sens: 2, click: 2, n: 3, verdicts: { VERIFIED: 2, CONTEXTUAL: 1 }, ids: ['a', 'b', 'c'], dominant: 'VERIFIED' });
   assert.deepEqual(d.models, ['m1', 'm2']);
   assert.deepEqual(d.promptHashes, ['p1', 'p2']);
+  assert.deepEqual(d.scorer.sweep, { models: ['m1', 'm2'], prompts: ['p1', 'p2'] });
+});
+
+test('a scorer change is per mode: a day with full-text rows is not a change against a day without', async () => {
+  const { scorerChangedBetween } = await import('../pipeline/daily.js');
+  const sweepOnly = summarizeDay('d1', [row('a', 'A', 1, 1, 'VERIFIED', '2026-11-22T12:00:00Z', 'm1', 'p1')]);
+  const withFulltext = summarizeDay('d2', [{ ...row('b', 'A', 1, 1, 'MISLEADING', '2026-11-23T12:00:00Z', 'm1', 'p1'), fulltext: { mode: 'fulltext', model: 'm1', promptHash: 'pf' } }]);
+  assert.equal(scorerChangedBetween(sweepOnly, withFulltext), false, 'an extra mode is not a scorer change');
+  const newPrompt = summarizeDay('d3', [row('c', 'A', 1, 1, 'VERIFIED', '2026-11-24T12:00:00Z', 'm1', 'p9')]);
+  assert.equal(scorerChangedBetween(withFulltext, newPrompt), true, 'the sweep prompt changed');
+  const newModel = summarizeDay('d4', [row('d', 'A', 1, 1, 'VERIFIED', '2026-11-25T12:00:00Z', 'm2', 'p9')]);
+  assert.equal(scorerChangedBetween(newPrompt, newModel), true);
+  assert.equal(scorerChangedBetween(null, newModel), false);
+  // Legacy entries without per-mode sets fall back to the aggregate sets.
+  assert.equal(scorerChangedBetween({ models: ['m0'], promptHashes: ['p0'] }, { models: ['m0'], promptHashes: ['p0'] }), false);
+  assert.equal(scorerChangedBetween({ models: ['m0'], promptHashes: ['p0'] }, { models: ['m1'], promptHashes: ['p0'] }), true);
 });
 
 test('updateDaily recomputes the window days, keeps older days, trims, and marks scorer changes', () => {
@@ -60,4 +77,10 @@ test('updateDaily recomputes the window days, keeps older days, trims, and marks
   assert.equal(out.keepDays, 35);
   const fresh = updateDaily(null, runs, { now });
   assert.equal(fresh.days.length, 2);
+  assert.deepEqual(d23.titles, { x: { t: 'Headline x', o: 'A', v: 'VERIFIED' } }, 'recent days keep headline text per id');
+  const stale = updateDaily({ days: [{ ...previous.days[1], titles: { z: { t: 'old', o: 'A', v: 'VERIFIED' } } }] }, runs, { now, titleDays: 1 });
+  assert.equal(stale.days.find((d) => d.day === '2026-11-20').titles, undefined, 'titles age out beyond titleDays');
+  // titleDays 1 from Nov 23 (ET) keeps Nov 22 and Nov 23.
+  assert.ok(stale.days.find((d) => d.day === '2026-11-22').titles);
+  assert.ok(stale.days.find((d) => d.day === '2026-11-23').titles);
 });
