@@ -8,6 +8,7 @@
     { "source": "/headlines", "destination": "/index.html" },
     { "source": "/outlets", "destination": "/index.html" },
     { "source": "/method", "destination": "/index.html" },
+    { "source": "/validate", "destination": "/index.html" },
     { "source": "/article/:id", "destination": "/index.html" }
   ],
   "headers": [

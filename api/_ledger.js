@@ -21,6 +21,8 @@ export const ALLOWED = {
   aggregate: { file: 'aggregate.json', type: 'application/json; charset=utf-8' },
   stats: { file: 'stats.csv', type: 'text/csv; charset=utf-8' },
   daily: { file: 'daily.json', type: 'application/json; charset=utf-8' },
+  'validation-set': { file: 'validation/set.json', type: 'application/json; charset=utf-8' },
+  'validation-agreement': { file: 'validation/agreement.json', type: 'application/json; charset=utf-8' },
 };
 
 export function repoCoordinates(env = process.env) {

@@ -17,6 +17,7 @@ import { runScan, REUSE_WINDOW_HOURS } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
 import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
 import { updateDaily } from '../pipeline/daily.js';
+import { refreshAgreement } from '../pipeline/validation.js';
 import { historyRecord, statsRecord } from '../pipeline/summarize.js';
 import { computeAggregate, WINDOW_HOURS } from '../pipeline/aggregate.js';
 import { readBaseline, readGoldenSet, writeBaselineIfAbsent } from '../pipeline/golden.js';
@@ -164,6 +165,9 @@ async function main() {
   // Daily tone summary for the site's tone trail: recompute the days the
   // reuse window covers, keep older days as recorded.
   paths.push(await writeDaily(updateDaily(await readDaily({ root }), allRuns.filter((r) => Date.parse(r.startedAt) >= after - reuseMs), { now: after }), { root }));
+  // Human validation agreement, from any labels files committed since.
+  const agreement = await refreshAgreement({ root });
+  if (agreement) log(`[signal] validation: ${agreement.statement} (${agreement.complete} complete of ${agreement.minReviewers})`);
 
   log(`[signal] wrote ${paths.join(', ')}`);
   const s = run.summary;

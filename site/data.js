@@ -27,15 +27,21 @@ async function getText(url) {
 const byStart = (a, b) => String(a.started_at).localeCompare(String(b.started_at));
 
 export async function loadAll() {
-  const [meta, latest, historyText, statsText, aggregate, daily] = await Promise.all([
+  const [meta, latest, historyText, statsText, aggregate, daily, validation] = await Promise.all([
     getJson(`${base}/meta`),
     getJson(`${base}/data?file=latest`),
     getText(`${base}/data?file=history`).catch(() => ''),
     getText(`${base}/data?file=stats`).catch(() => ''),
     getJson(`${base}/data?file=aggregate`).catch(() => null),
     getJson(`${base}/data?file=daily`).catch(() => null),
+    getJson(`${base}/data?file=validation-agreement`).catch(() => null),
   ]);
   const history = parseCsv(historyText).filter((r) => r.run_id).sort(byStart);
   const stats = parseCsv(statsText).filter((r) => r.run_id).sort(byStart);
-  return { meta, latest, history, stats, aggregate, daily };
+  return { meta, latest, history, stats, aggregate, daily, validation };
+}
+
+// The blind labelling set, loaded only on the /validate route.
+export async function loadValidationSet() {
+  return getJson(`${base}/data?file=validation-set`).catch(() => null);
 }

@@ -9,7 +9,9 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "scan": "node scripts/scan.js",
-    "scan:dry": "node scripts/scan.js --dry-run"
+    "scan:dry": "node scripts/scan.js --dry-run",
+    "validation:build": "node scripts/build-validation-set.js",
+    "report:daily": "node scripts/report-daily.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.12.0"
