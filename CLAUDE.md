@@ -65,14 +65,15 @@ fix is itself a defect.
    titled "Signal — Media Integrity Scanner" so link previews render the
    new deck.
 
-## Queued after phase 2
+## Done after phase 2
 
-- Tone map upgrade: dot size = count at each (sensationalism, clickbait)
+- Tone map upgrade (merged): dot size = count at each (sensationalism, clickbait)
   point, colour = dominant verdict, tap to list headlines; a 30-day "TONE
   TRAIL · 30D" of daily centroids fading with age with today's marker
   (never called drift; drift is the golden-set panel's word); markers on
   days the model string or prompt hash changed; a day scrubber; tapping an
   outlet (or a watchlist star) overlays its own 30-day trail for outlets
   with at least 20 rows in the window. The scan job precomputes
-  `data/daily.json` (overall and per-outlet centroids and counts) so the
-  site never loads raw scan files for this.
+  `data/daily.json` (overall and per-outlet centroids and counts, per-mode
+  scorer identity, titles for the last 7 days) so the site never loads raw
+  scan files for this.
