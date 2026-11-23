@@ -1,0 +1,17 @@
+# Manual trigger: one full scan, exactly as the hourly job runs it. Use it
+# after adding the ANTHROPIC_API_KEY secret. The run report (per-feed HTTP
+# status, rows scored vs unscored, tokens, cost, one raw model response) is in
+# the job summary and attached as an artifact; the ledger is committed to main.
+name: live-check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  full-scan:
+    uses: ./.github/workflows/scan.yml
+    with:
+      dry_run: false
+    secrets: inherit
+    permissions:
+      contents: write

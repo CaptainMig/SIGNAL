@@ -1,0 +1,17 @@
+{
+  "name": "signal",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Signal v2 — a media-integrity scanner that scores how faithfully a headline represents its own article. Scheduled server-side scans, an append-only ledger, a static read-only site.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "scan": "node scripts/scan.js",
+    "scan:dry": "node scripts/scan.js --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0"
+  }
+}
