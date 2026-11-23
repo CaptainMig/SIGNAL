@@ -235,8 +235,8 @@ export function extractionPanel(ex) {
   const skipped = ex.skipped?.video || 0;
   return `<div style="display:flex;flex-direction:column;gap:10px">
     <div class="hero" style="gap:10px"><div class="mid" style="color:${color}">${pct == null ? '—' : fmt.num(pct, 0)}<span class="unit">%</span></div><div class="note">ARTICLE TEXT EXTRACTED · THIS RUN<br>${ex.successes} OF ${ex.attempts} FETCHES · TARGET ≥ ${EXTRACTION_TARGET_PCT}% · ${skipped} VIDEO PAGE${skipped === 1 ? '' : 'S'} SKIPPED (NO ARTICLE TEXT, COUNTED BESIDE)</div></div>
-    <div class="note">FAILURES · ${bagText(ex.reasons, REASON_LABELS)}</div>
-    <div class="note">ROUTES THAT SUCCEEDED · ${bagText(ex.routes, ROUTE_SHORT)} · SECOND NETWORK ROUTE ${esc(String(ex.remote || 'not configured').toUpperCase())}</div>
+    <div class="note">FAILURES · ${ex.reasons && Object.keys(ex.reasons).length ? bagText(ex.reasons, REASON_LABELS) : ex.attempts > ex.successes ? 'REASONS RECORDED FROM THE NEXT RUN' : 'NONE'}</div>
+    <div class="note">ROUTES THAT SUCCEEDED · ${ex.routes && Object.keys(ex.routes).length ? bagText(ex.routes, ROUTE_SHORT) : 'RECORDED FROM THE NEXT RUN'} · SECOND NETWORK ROUTE ${esc(String(ex.remote || 'not configured').toUpperCase())}</div>
     ${outlets.length ? `<div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">OUTLET</th><th>FETCHED</th><th>RATE</th><th class="l">FAILURES</th><th class="l">ROUTES</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="note">NO FETCHES THIS RUN</div>`}
   </div>`;
 }
