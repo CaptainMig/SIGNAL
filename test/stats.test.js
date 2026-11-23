@@ -35,6 +35,48 @@ test('cluster bootstrap resamples outlets, is seeded, and brackets the point', (
   assert.deepEqual(clusterBootstrap([], mean, { seed: 1 }).point, NaN);
 });
 
+// Unseeded shuffle on purpose: the routines under test must give identical
+// output whatever order their input arrives in.
+function shuffle(list) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+test('cluster bootstrap: identical output on shuffled input (groups and members), twice', () => {
+  const groups = [
+    [{ id: 'a1', v: 10 }, { id: 'a2', v: 12 }, { id: 'a3', v: 11 }],
+    [{ id: 'b1', v: 30 }, { id: 'b2', v: 31 }],
+    [{ id: 'c1', v: 20 }, { id: 'c2', v: 21 }, { id: 'c3', v: 19 }, { id: 'c4', v: 20 }],
+    [{ id: 'd1', v: 50 }, { id: 'd2', v: 52 }],
+    [{ id: 'e1', v: 5 }],
+  ];
+  const mean = (xs) => xs.reduce((a, r) => a + r.v, 0) / xs.length;
+  const base = clusterBootstrap(groups, mean, { seed: 11, iterations: 300 });
+  for (let k = 0; k < 2; k++) {
+    const shuffled = shuffle(groups.map((g) => shuffle(g)));
+    assert.deepEqual(clusterBootstrap(shuffled, mean, { seed: 11, iterations: 300 }), base, 'order of groups and of members must not change the interval');
+  }
+  assert.ok(base.lo != null && base.hi != null && base.lo <= base.point && base.point <= base.hi);
+});
+
+test('within-outlet permutation: identical output on shuffled rows, twice', () => {
+  const rows = [];
+  let id = 0;
+  for (const outlet of ['X', 'Y', 'Z']) {
+    for (let i = 0; i < 5; i++) rows.push({ id: `r${id++}`, outlet, flagged: true, value: 5 + (i % 3) });
+    for (let i = 0; i < 7; i++) rows.push({ id: `r${id++}`, outlet, flagged: false, value: 2 + (i % 4) });
+  }
+  const base = permutationWithinOutlet(rows, { seed: 5, iterations: 400, bootstrapIterations: 150 });
+  for (let k = 0; k < 2; k++) {
+    assert.deepEqual(permutationWithinOutlet(shuffle(rows), { seed: 5, iterations: 400, bootstrapIterations: 150 }), base, 'row order must not change p or the interval');
+  }
+  assert.equal(base.underpowered, false);
+});
+
 test('beta-binomial shrinkage pulls toward the pooled rate by strength', () => {
   assert.equal(shrink(9, 10, 0.5, 20), 63.3); // (9 + 10) / 30
   assert.equal(shrink(9, 10, 0.5, 0), 90);

@@ -21,6 +21,22 @@ import { mulberry32, seedFrom } from './prng.js';
 
 const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
 
+// Canonical ordering so a result never depends on the order rows arrived
+// in: groups sort by a signature of their members, members by id (or value).
+function memberKey(r) {
+  if (r && typeof r === 'object') return String(r.id ?? JSON.stringify(r));
+  return String(r);
+}
+function canonicalGroup(group) {
+  return group.slice().sort((a, b) => (memberKey(a) < memberKey(b) ? -1 : memberKey(a) > memberKey(b) ? 1 : 0));
+}
+function canonicalGroups(groups) {
+  return groups
+    .map((g) => ({ g: canonicalGroup(g), sig: g.length + ':' + canonicalGroup(g).map(memberKey).join('\u0001') }))
+    .sort((a, b) => (a.sig < b.sig ? -1 : a.sig > b.sig ? 1 : 0))
+    .map((x) => x.g);
+}
+
 function percentile(sorted, q) {
   if (!sorted.length) return null;
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))));
@@ -48,7 +64,9 @@ export function wilson(k, n, z = 1.959964) {
  * and the percentile 95% interval, or nulls when fewer than 2 groups.
  */
 export function clusterBootstrap(groups, statFn, { seed = 1, iterations = BOOTSTRAP_ITERATIONS, alpha = 0.05 } = {}) {
-  const g = groups.filter((x) => x && x.length);
+  // Input order must not matter: a run's rows arrive in feed order, and the
+  // same rows in another order are the same sample.
+  const g = canonicalGroups(groups.filter((x) => x && x.length));
   const observed = statFn(g.flat());
   if (g.length < 2) return { point: observed, lo: null, hi: null, clusters: g.length, iterations: 0 };
   const rand = mulberry32(seedFrom('cluster-bootstrap', seed, g.length));
@@ -80,7 +98,12 @@ export function shrink(k, n, p0, strength = SHRINK_STRENGTH) {
  * flags WITHIN each outlet. Rows: [{ outlet, flagged, value }].
  */
 export function permutationWithinOutlet(rows, { seed = 1, iterations = PERMUTATION_ITERATIONS, minGroup = PERMUTATION_MIN_GROUP, bootstrapIterations = BOOTSTRAP_ITERATIONS } = {}) {
-  const valid = rows.filter((r) => r && Number.isFinite(r.value));
+  // Canonical order (outlet, flag, value, id) so the label shuffle inside each
+  // outlet does not depend on the order rows arrived in.
+  const valid = rows
+    .filter((r) => r && Number.isFinite(r.value))
+    .slice()
+    .sort((a, b) => String(a.outlet).localeCompare(String(b.outlet)) || (a.flagged === b.flagged ? 0 : a.flagged ? 1 : -1) || a.value - b.value || String(a.id ?? '').localeCompare(String(b.id ?? '')));
   const flagged = valid.filter((r) => r.flagged);
   const rest = valid.filter((r) => !r.flagged);
   const nFlagged = flagged.length;
