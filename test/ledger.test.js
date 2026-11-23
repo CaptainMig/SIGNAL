@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HISTORY_COLUMNS, appendHistory, csvEscape, ledgerPaths, readLatest, readRecentScans, resolveRuns, scanPathFor, toCsvLine, writeLatest, writeScan } from '../pipeline/ledger.js';
+import { HISTORY_COLUMNS, STATS_COLUMNS, appendHistory, appendStats, countHistoryRuns, csvEscape, ledgerPaths, readLatest, readRecentScans, resolveRuns, scanPathFor, toCsvLine, writeLatest, writeScan } from '../pipeline/ledger.js';
 
 const tmp = () => fs.mkdtemp(path.join(os.tmpdir(), 'signal-ledger-'));
 const run = (startedAt, id = startedAt.slice(0, 13)) => ({ id, startedAt, finishedAt: startedAt, summary: {} });
@@ -98,4 +98,23 @@ test('writeLatest overwrites in place', async () => {
   await writeLatest(run('2026-11-23T05:00:00.000Z'), [{ id: 'y' }], { root });
   const latest = JSON.parse(await fs.readFile(ledgerPaths(root).latest, 'utf8'));
   assert.equal(latest.rows[0].id, 'y');
+});
+
+test('stats.csv is a second append-only ledger keyed by run_id; run count comes from history.csv', async () => {
+  const root = await tmp();
+  assert.equal(await countHistoryRuns({ root }), 0);
+  const rec = Object.fromEntries(HISTORY_COLUMNS.map((c) => [c, c === 'run_id' ? 'r1' : 1]));
+  await appendHistory(rec, { root });
+  await appendHistory({ ...rec, run_id: 'r2' }, { root });
+  assert.equal(await countHistoryRuns({ root }), 2);
+  const st = Object.fromEntries(STATS_COLUMNS.map((c) => [c, c === 'run_id' ? 'r1' : null]));
+  await appendStats(st, { root });
+  await appendStats({ ...st, run_id: 'r2', fi_strict_low: 33.3 }, { root });
+  const text = await fs.readFile(ledgerPaths(root).stats, 'utf8');
+  const lines = text.trimEnd().split('\n');
+  assert.equal(lines[0], STATS_COLUMNS.join(','));
+  assert.equal(lines.length, 3);
+  assert.ok(lines[2].startsWith('r2,,33.3,'));
+  await fs.writeFile(ledgerPaths(root).stats, 'foo\n');
+  await assert.rejects(appendStats(st, { root }), /stats.csv header does not match/);
 });

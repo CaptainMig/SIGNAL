@@ -19,13 +19,14 @@
 // whose scan file holds its full record (`writtenIn`). latest.json is always
 // the full current view.
 // ---------------------------------------------------------------------------
-import { EXTRACT_CONCURRENCY, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS } from './config.js';
+import { EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS, GOLDEN_EVERY_N_RUNS } from './config.js';
 import { collectHeadlines } from './feeds.js';
 import { detectSlam } from './slam.js';
 import { fetchArticle } from './extract.js';
-import { escalationOutcome, needsEscalation } from './escalate.js';
+import { auditResult, auditSampleSize, escalationOutcome, escalationReason, pickAuditRows } from './escalate.js';
 import { summarizeRun } from './summarize.js';
 import { promptHash } from './prompt.js';
+import { compareGolden, scoreGoldenSet } from './golden.js';
 
 export const REUSE_WINDOW_HOURS = 48;
 
@@ -54,9 +55,12 @@ function reusable(entry, row, hashes, model) {
   }
   if (prior.fulltext && prior.fulltext.model === model && prior.fulltext.promptHash === hashes.fulltext) {
     out.fulltext = { ...prior.fulltext, usage: null, latencyMs: null, carriedFrom: prior.fulltext.carriedFrom || entry.runId };
-  } else if (prior.fulltextError?.reason === 'blocked') {
-    out.fulltextError = { ...prior.fulltextError, carriedFrom: prior.fulltextError.carriedFrom || entry.runId };
+  } else if (prior.fulltextError) {
+    // Every extraction failure is carried with its attempt count; the retry
+    // policy (EXTRACT_MAX_ATTEMPTS) decides whether this run tries again.
+    out.fulltextError = { ...prior.fulltextError, attempts: prior.fulltextError.attempts || 1, carriedFrom: prior.fulltextError.carriedFrom || entry.runId };
   }
+  if (prior.audit) out.audit = true;
   return out;
 }
 
@@ -134,6 +138,10 @@ export async function runScan({
   log = () => {},
   extractConcurrency = EXTRACT_CONCURRENCY,
   model = MODEL,
+  maxAttempts = EXTRACT_MAX_ATTEMPTS,
+  golden = null, // { set, baseline, every } — scored when runIndex % every === 0
+  runIndex = 0,
+  auditSize = null, // override the audit sample size (tests); null = schedule
 } = {}) {
   const startedMs = now();
   const startedAt = new Date(startedMs).toISOString();
@@ -149,7 +157,8 @@ export async function runScan({
     sweepError: null,
     fulltext: null,
     fulltextError: null,
-    escalation: { eligible: false, sweepVerdict: null, outcome: null },
+    outlet: feeds.find((f) => f.name === r.publication)?.outlet || r.publication,
+    escalation: { eligible: false, reason: null, sweepVerdict: null, outcome: null, unresolved: false, attempts: 0 },
     final: null,
   }));
   if (limit > 0) rows = rows.slice(0, limit);
@@ -168,6 +177,7 @@ export async function runScan({
     }
     if (reuse?.fulltext) row.fulltext = reuse.fulltext;
     if (reuse?.fulltextError) row.fulltextError = reuse.fulltextError;
+    if (reuse?.audit) row.audit = true;
     if (reuse && (reuse.sweep || reuse.fulltext || reuse.fulltextError)) {
       row.writtenIn = entry.row.writtenIn || entry.runId;
     }
@@ -193,27 +203,67 @@ export async function runScan({
     });
   }
 
-  // Escalation: flagged sweep rows get the article body and a full-text score.
-  const flagged = rows.filter((r) => needsEscalation(r.sweep));
-  for (const row of flagged) row.escalation = { eligible: true, sweepVerdict: row.sweep.verdict, outcome: null };
-  const toEscalate = dryRun ? [] : flagged.filter((r) => !r.fulltext && !(r.fulltextError?.reason === 'blocked'));
-  if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} flagged row(s) to full text`);
+  // Escalation: flagged sweep rows (PROVISIONAL, CONTESTED, low-fidelity
+  // CONTEXTUAL) get the article body and a full-text score.
+  const id = runIdFor(startedAt);
+  for (const row of rows) {
+    const reason = escalationReason(row.sweep);
+    if (reason) row.escalation = { eligible: true, reason, sweepVerdict: row.sweep.verdict, outcome: null, unresolved: false, attempts: row.fulltextError?.attempts || 0 };
+  }
+  // Audit sample: seeded, stratified sweep VERIFIED / CONTEXTUAL rows, the
+  // only check on what the sweep does not flag (DEFECTS.md v2-8, v2-14).
+  const auditIds = dryRun ? new Set() : new Set(pickAuditRows(rows, { runId: id, size: auditSize ?? auditSampleSize(startedAt) }));
+  let auditSampled = 0;
+  for (const row of rows) {
+    if (auditIds.has(row.id)) {
+      row.audit = true;
+      row.auditSampledIn = id;
+      auditSampled++;
+    }
+  }
+  const flagged = rows.filter((r) => r.escalation.eligible);
+  const wantsText = rows.filter((r) => r.escalation.eligible || r.audit);
+  // Retry policy: a failed fetch is retried on later runs until maxAttempts
+  // total, then the row is UNRESOLVED (DEFECTS.md v2-15).
+  const toEscalate = dryRun ? [] : wantsText.filter((r) => !r.fulltext && (r.fulltextError?.attempts || 0) < maxAttempts);
+  if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} row(s) to full text (${auditSampled} audit)`);
+  const extraction = { attempts: 0, successes: 0, byOutlet: {} };
   await pool(toEscalate, extractConcurrency, async (row) => {
+    const priorAttempts = row.fulltextError?.attempts || 0;
     row.fulltextError = null;
+    extraction.attempts++;
+    const o = (extraction.byOutlet[row.outlet] ||= { attempts: 0, successes: 0 });
+    o.attempts++;
     const ex = await fetchArticle(row.link, { fetch });
     if (!ex.ok) {
-      row.fulltextError = { reason: ex.reason, detail: ex.detail, stage: 'extract', chars: ex.chars ?? null, at: new Date(now()).toISOString() };
+      row.fulltextError = { reason: ex.reason, detail: ex.detail, stage: 'extract', chars: ex.chars ?? null, attempts: priorAttempts + 1, at: new Date(now()).toISOString() };
       return;
     }
+    extraction.successes++;
+    o.successes++;
     const res = await scorer.scoreOne({ headline: row.title, body: ex.text, mode: 'fulltext' });
     if (res.ok) row.fulltext = scoreRecord(res, 'fulltext', { chars: ex.chars });
-    else row.fulltextError = { ...errorRecord(res, 'score'), chars: ex.chars };
+    else row.fulltextError = { ...errorRecord(res, 'score'), chars: ex.chars, attempts: priorAttempts + 1 };
   });
   for (const row of flagged) {
-    row.escalation.outcome = escalationOutcome(row.sweep.verdict, row.fulltext?.verdict || null);
+    const attempts = row.fulltextError?.attempts || 0;
+    row.escalation.attempts = attempts;
+    const exhausted = !row.fulltext && !!row.fulltextError && attempts >= maxAttempts;
+    row.escalation.unresolved = exhausted;
+    row.escalation.outcome = escalationOutcome(row.sweep.verdict, row.fulltext?.verdict || null, { pending: !exhausted });
+  }
+  for (const row of rows) {
+    if (row.audit) row.auditOutcome = auditResult(row.sweep?.verdict, row.fulltext?.verdict || null);
   }
 
-  const id = runIdFor(startedAt);
+  // Golden set: frozen pairs scored for drift, on the configured cadence.
+  let goldenReport = null;
+  if (!dryRun && golden?.set && runIndex % (golden.every || GOLDEN_EVERY_N_RUNS) === 0) {
+    log(`[signal] scoring golden set (${golden.set.items.length} items)`);
+    const scored = await scoreGoldenSet(scorer, golden.set);
+    goldenReport = { ...scored, runId: id, comparison: compareGolden(scored, golden.baseline || null) };
+  }
+
   for (const row of rows) {
     row.final = finalize(row);
     if (isFreshRow(row)) row.writtenIn = id;
@@ -226,7 +276,7 @@ export async function runScan({
   };
 
   const finishedMs = now();
-  const summary = summarizeRun({ rows, feeds: collected.feeds });
+  const summary = summarizeRun({ rows, feeds: collected.feeds, runId: id, extraction, golden: goldenReport, auditSampled });
   const run = {
     id,
     startedAt,
@@ -239,7 +289,8 @@ export async function runScan({
     config: { thinking: THINKING, effort: EFFORT, bodyChars: BODY_CHARS, reuseWindowHours: REUSE_WINDOW_HOURS, pricing: PRICING },
     feeds: collected.feeds,
     summary,
+    golden: goldenReport,
   };
   log(`[signal] done in ${run.durationMs} ms · ${summary.rows.scored}/${summary.rows.total} scored · ${delta.rows.length} fresh row(s), ${delta.carried.length} carried · $${summary.costUsd}`);
-  return { run, rows, delta };
+  return { run, rows, delta, goldenReport };
 }

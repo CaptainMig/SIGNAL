@@ -5,17 +5,26 @@
 //   v1 = 100 × (F + (10−S) + (10−C)) / 30          (v1, no gating; thin rows F=5)
 //   v2 = 100 × F/10 × (1 − 0.25·S/10 − 0.25·C/10)  (fidelity gates the score)
 //
-// Framing Integrity (share of rows whose headline fairly represents its own
-// article). v2 is computed over rows WITH article text only, and shown as a
-// range while PROVISIONAL rows are pending: counted bad = low bound, counted
-// good = high bound. v1 reproduces the old population: thin-body rows counted
-// as VERIFIED, which is what the old empty-body prompt rule did.
+// Framing Integrity is published TWO ways (DEFECTS.md v2-13), neither yet
+// "the" number:
+//   strict — share of text rows rated VERIFIED
+//   broad  — share of text rows rated VERIFIED or CONTEXTUAL
+// Each is a range while PROVISIONAL rows are pending: counted bad = low bound,
+// counted good = high bound. Both are computed over rows WITH article text
+// (feed summary or full text) that are not UNRESOLVED; unresolved rows are
+// counted beside the numbers (DEFECTS.md v2-15). v1 reproduces the old
+// population: thin-body rows counted VERIFIED, as the old prompt rule did.
 //
 // Every function is pure and takes ledger rows (see run.js for the shape).
+// Outlet grouping uses `row.outlet` (DEFECTS.md v2-5).
 // ---------------------------------------------------------------------------
-import { INTEGRITY_VERDICTS } from './verdicts.js';
+import { OUTLET_MIN_N } from './config.js';
 
-const round1 = (n) => Math.round(n * 10) / 10;
+const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
+
+export const STRICT_VERDICTS = ['VERIFIED'];
+export const BROAD_VERDICTS = ['VERIFIED', 'CONTEXTUAL'];
+export const DEFINITIONS = { strict: STRICT_VERDICTS, broad: BROAD_VERDICTS };
 
 export function articleIntegrityV1(score, { thinBody = false } = {}) {
   if (!score || score.sens == null || score.click == null) return null;
@@ -34,25 +43,41 @@ export function articleIntegrityV2(score) {
 export const isScored = (row) => !!row.final && row.final.source !== 'unscored';
 // Rows whose final verdict was judged against article text (feed or fulltext).
 export const hasText = (row) => isScored(row) && row.final.verdict != null && row.final.source !== 'tone';
+// Rows whose flagged sweep verdict could never be checked: retries exhausted.
+export const isUnresolved = (row) => !!row.escalation?.unresolved;
+// The Framing Integrity population.
+export const countsForFI = (row) => hasText(row) && !isUnresolved(row);
 
 /**
- * Framing Integrity v2 over rows with article text.
- * @returns {{ n, good, provisional, low, high, point }} percentages 0–100, or
- *          nulls when n is 0. `point` is the midpoint for sparklines.
+ * Framing Integrity for one definition ('strict' | 'broad') over rows.
+ * @returns {{ n, good, provisional, unresolved, low, high, point }}
  */
-export function framingIntegrityV2(rows) {
-  const text = rows.filter(hasText);
+export function framingIntegrity(rows, definition = 'broad') {
+  const goodSet = DEFINITIONS[definition];
+  if (!goodSet) throw new Error(`unknown definition ${definition}`);
+  const text = rows.filter(countsForFI);
+  const unresolved = rows.filter((r) => hasText(r) && isUnresolved(r)).length;
   const n = text.length;
-  if (!n) return { n: 0, good: 0, provisional: 0, low: null, high: null, point: null };
+  if (!n) return { definition, n: 0, good: 0, provisional: 0, unresolved, low: null, high: null, point: null };
   let good = 0;
   let provisional = 0;
   for (const r of text) {
-    if (INTEGRITY_VERDICTS.includes(r.final.verdict)) good++;
+    if (goodSet.includes(r.final.verdict)) good++;
     else if (r.final.verdict === 'PROVISIONAL') provisional++;
   }
   const low = round1((100 * good) / n);
   const high = round1((100 * (good + provisional)) / n);
-  return { n, good, provisional, low, high, point: round1((low + high) / 2) };
+  return { definition, n, good, provisional, unresolved, low, high, point: round1((low + high) / 2) };
+}
+
+export const framingIntegrityStrict = (rows) => framingIntegrity(rows, 'strict');
+export const framingIntegrityBroad = (rows) => framingIntegrity(rows, 'broad');
+// Back-compatible alias: v2 as first published (broad).
+export const framingIntegrityV2 = framingIntegrityBroad;
+
+// Midpoint statistic for one definition — the thing the cluster bootstrap resamples.
+export function fiPoint(rows, definition) {
+  return framingIntegrity(rows, definition).point;
 }
 
 /**
@@ -66,28 +91,45 @@ export function framingIntegrityV1(rows) {
   let good = 0;
   for (const r of scored) {
     if (r.final.verdict == null) good++; // thin row: old rule defaulted to VERIFIED
-    else if (INTEGRITY_VERDICTS.includes(r.final.verdict)) good++;
+    else if (BROAD_VERDICTS.includes(r.final.verdict)) good++;
   }
   return { n, good, value: round1((100 * good) / n) };
 }
 
-// Outlet-balanced Framing Integrity v2: mean of per-outlet rates (point
-// estimate of each outlet's range midpoint), so a high-volume outlet cannot
-// dominate. Outlets with no text rows are skipped.
-export function outletBalancedV2(rows) {
-  const byPub = new Map();
-  for (const r of rows.filter(hasText)) {
-    if (!byPub.has(r.publication)) byPub.set(r.publication, []);
-    byPub.get(r.publication).push(r);
+// Group FI-population rows by outlet (falls back to publication for rows
+// written before the outlet key existed).
+export function groupByOutlet(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const key = r.outlet || r.publication;
+    if (!by.has(key)) by.set(key, []);
+    by.get(key).push(r);
   }
-  const rates = [];
-  for (const [, group] of byPub) {
-    const fi = framingIntegrityV2(group);
-    if (fi.point != null) rates.push(fi.point);
-  }
-  if (!rates.length) return { outlets: 0, value: null };
-  return { outlets: rates.length, value: round1(rates.reduce((a, b) => a + b, 0) / rates.length) };
+  return by;
 }
+
+/**
+ * Outlet-balanced Framing Integrity: mean of per-outlet midpoints over
+ * outlets with at least `minN` FI-population rows (DEFECTS.md v2-6).
+ * @returns {{ definition, minN, outlets, qualified, value, perOutlet }}
+ */
+export function outletBalanced(rows, definition = 'broad', { minN = OUTLET_MIN_N } = {}) {
+  const groups = groupByOutlet(rows.filter(countsForFI));
+  const perOutlet = [];
+  for (const [outlet, group] of groups) {
+    const fi = framingIntegrity(group, definition);
+    perOutlet.push({ outlet, n: fi.n, point: fi.point, low: fi.low, high: fi.high, qualified: fi.n >= minN });
+  }
+  const qualified = perOutlet.filter((o) => o.qualified);
+  const value = qualified.length ? round1(qualified.reduce((a, o) => a + o.point, 0) / qualified.length) : null;
+  return { definition, minN, outlets: perOutlet.length, qualified: qualified.length, value, perOutlet };
+}
+
+// Back-compatible alias (broad, min n).
+export const outletBalancedV2 = (rows) => {
+  const b = outletBalanced(rows, 'broad');
+  return { outlets: b.qualified, value: b.value };
+};
 
 // Coverage: share of rows (excluding unscored) that carry article text.
 export function coverage(rows) {

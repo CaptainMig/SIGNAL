@@ -35,12 +35,29 @@ export const HISTORY_COLUMNS = [
   'audit_sampled', 'audit_scored', 'audit_overturned', 'audit_overturn_pct',
 ];
 
+// Methodology v2 statistics per run (phase 2), a companion to history.csv
+// keyed by run_id. Same rules: frozen columns, append-only.
+export const STATS_COLUMNS = [
+  'run_id', 'started_at',
+  'fi_strict_low', 'fi_strict_high', 'fi_strict_ci_low', 'fi_strict_ci_high',
+  'fi_broad_low', 'fi_broad_high', 'fi_broad_ci_low', 'fi_broad_ci_high',
+  'fi_strict_balanced', 'fi_broad_balanced', 'outlets_qualified', 'outlet_min_n', 'fi_unresolved',
+  'esc_reclassified', 'esc_unresolved', 'esc_contextual_eligible',
+  'esc_contextual_to_verified', 'esc_contextual_to_contextual', 'esc_contextual_to_contested', 'esc_contextual_to_unverifiable', 'esc_contextual_to_misleading',
+  'audit_present', 'audit_changed',
+  'extract_attempts', 'extract_successes', 'extract_success_pct',
+  'slam_gap', 'slam_gap_ci_low', 'slam_gap_ci_high', 'slam_p', 'slam_n_flagged', 'slam_n_rest',
+  'golden_scored', 'golden_agreement_pct', 'golden_expected_agreement_pct', 'golden_fidelity_drift', 'golden_sens_drift', 'golden_click_drift', 'golden_alert', 'golden_cost_usd',
+];
+
 export function ledgerPaths(root = '.', dataDir = DATA_DIR) {
   const base = path.join(root, dataDir);
   return {
     base,
     scans: path.join(base, 'scans'),
     history: path.join(base, 'history.csv'),
+    stats: path.join(base, 'stats.csv'),
+    daily: path.join(base, 'daily.json'),
     latest: path.join(base, 'latest.json'),
     aggregate: path.join(base, 'aggregate.json'),
   };
@@ -128,33 +145,50 @@ export function toCsvLine(record, columns = HISTORY_COLUMNS) {
   return columns.map((c) => csvEscape(record[c])).join(',');
 }
 
-/**
- * Append one run to history.csv. Creates the file with the header when it is
- * missing; refuses to append under a foreign header. Never rewrites.
- */
-export async function appendHistory(record, { root = '.' } = {}) {
-  const paths = ledgerPaths(root);
-  await fs.mkdir(paths.base, { recursive: true });
-  const header = HISTORY_COLUMNS.join(',');
-  if (await exists(paths.history)) {
-    const fh = await fs.open(paths.history, 'r');
+// Append one record to an append-only CSV. Creates the file with the header
+// when it is missing; refuses to append under a foreign header. Never rewrites.
+async function appendCsv(file, columns, record, label) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const header = columns.join(',');
+  if (await exists(file)) {
+    const fh = await fs.open(file, 'r');
     try {
       const buf = Buffer.alloc(Math.min(8192, (await fh.stat()).size));
       await fh.read(buf, 0, buf.length, 0);
       const first = buf.toString('utf8').split(/\r?\n/)[0];
       if (first !== header) {
-        throw new Error(`history.csv header does not match HISTORY_COLUMNS — a schema change needs a new file, not a rewrite`);
+        throw new Error(`${label} header does not match its column list — a schema change needs a new file, not a rewrite`);
       }
     } finally {
       await fh.close();
     }
-    const existing = await fs.readFile(paths.history, 'utf8');
+    const existing = await fs.readFile(file, 'utf8');
     const sep = existing.length && !existing.endsWith('\n') ? '\n' : '';
-    await fs.appendFile(paths.history, sep + toCsvLine(record) + '\n');
+    await fs.appendFile(file, sep + toCsvLine(record, columns) + '\n');
   } else {
-    await fs.writeFile(paths.history, header + '\n' + toCsvLine(record) + '\n');
+    await fs.writeFile(file, header + '\n' + toCsvLine(record, columns) + '\n');
   }
-  return paths.history;
+  return file;
+}
+
+/** Append one run to history.csv (frozen HISTORY_COLUMNS). */
+export async function appendHistory(record, { root = '.' } = {}) {
+  return appendCsv(ledgerPaths(root).history, HISTORY_COLUMNS, record, 'history.csv');
+}
+
+/** Append one run to stats.csv (frozen STATS_COLUMNS). */
+export async function appendStats(record, { root = '.' } = {}) {
+  return appendCsv(ledgerPaths(root).stats, STATS_COLUMNS, record, 'stats.csv');
+}
+
+// Number of runs already recorded in history.csv (data rows), or 0.
+export async function countHistoryRuns({ root = '.' } = {}) {
+  try {
+    const text = await fs.readFile(ledgerPaths(root).history, 'utf8');
+    return Math.max(0, text.split(/\r?\n/).filter((l) => l.trim().length).length - 1);
+  } catch {
+    return 0;
+  }
 }
 
 export async function writeLatest(run, rows, { root = '.' } = {}) {
@@ -162,6 +196,22 @@ export async function writeLatest(run, rows, { root = '.' } = {}) {
   await fs.mkdir(paths.base, { recursive: true });
   await fs.writeFile(paths.latest, JSON.stringify({ ...run, rows }, null, 0) + '\n');
   return paths.latest;
+}
+
+export async function readDaily({ root = '.' } = {}) {
+  try {
+    const d = JSON.parse(await fs.readFile(ledgerPaths(root).daily, 'utf8'));
+    return d && Array.isArray(d.days) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeDaily(daily, { root = '.' } = {}) {
+  const paths = ledgerPaths(root);
+  await fs.mkdir(paths.base, { recursive: true });
+  await fs.writeFile(paths.daily, JSON.stringify(daily) + '\n');
+  return paths.daily;
 }
 
 export async function writeAggregate(aggregate, { root = '.' } = {}) {

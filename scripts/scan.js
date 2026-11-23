@@ -15,9 +15,13 @@
 import { promises as fs } from 'node:fs';
 import { runScan, REUSE_WINDOW_HOURS } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
-import { appendHistory, readLatest, readRecentScans, resolveRuns, writeAggregate, writeLatest, writeScan } from '../pipeline/ledger.js';
-import { historyRecord } from '../pipeline/summarize.js';
+import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
+import { updateDaily } from '../pipeline/daily.js';
+import { historyRecord, statsRecord } from '../pipeline/summarize.js';
 import { computeAggregate, WINDOW_HOURS } from '../pipeline/aggregate.js';
+import { readBaseline, readGoldenSet, writeBaselineIfAbsent } from '../pipeline/golden.js';
+import { buildScorecards } from '../pipeline/scorecards.js';
+import { GOLDEN_EVERY_N_RUNS, SCORECARD_WINDOW_DAYS } from '../pipeline/config.js';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -32,10 +36,13 @@ const root = String(arg('--root', '.'));
 const reportPath = arg('--report', null);
 const log = (m) => console.log(m);
 
+const fmtRange = (a, b) => (a == null || b == null ? '—' : `${a}–${b}`);
+
 // Markdown run report. Nothing in it is article text: feed status, counts,
 // tokens, and the model's own JSON output for one headline.
 export function renderReport({ run, rows, scorer, paths }) {
   const s = run.summary;
+  const fi = s.framingIntegrity;
   const L = [];
   L.push(`# Signal scan ${run.id}${run.dryRun ? ' (dry run)' : ''}`);
   L.push('');
@@ -54,7 +61,7 @@ export function renderReport({ run, rows, scorer, paths }) {
   const blocked = run.feeds.filter((f) => f.status === 'blocked');
   if (blocked.length) {
     L.push('');
-    L.push(`**Blocked feeds (publisher refused the runner):** ${blocked.map((f) => `${f.name} (${f.reason})`).join(', ')}. Not dropped: listed in run health. Candidate fixes: a Google News \`site:\` fallback feed, or a fetch from the Vercel edge.`);
+    L.push(`**Blocked feeds (publisher refused the runner):** ${blocked.map((f) => `${f.name} (${f.reason})`).join(', ')}. Not dropped: listed in run health.`);
   }
   L.push('');
   L.push('## Rows');
@@ -67,8 +74,18 @@ export function renderReport({ run, rows, scorer, paths }) {
   if (carried) L.push(`Carried forward from prior runs: ${carried} sweep score(s); the scan file holds ${rows.length - carried} full row(s) and ${carried} reference(s)`);
   L.push('');
   L.push(`Verdicts: ${Object.entries(s.verdicts).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
-  L.push(`Framing Integrity v2 ${s.framingIntegrity.v2Low ?? '—'}–${s.framingIntegrity.v2High ?? '—'}% (n ${s.framingIntegrity.v2N}) · outlet-balanced ${s.framingIntegrity.outletBalanced ?? '—'}% · v1 ${s.framingIntegrity.v1 ?? '—'}% · coverage ${s.coverage ?? '—'}%`);
-  L.push(`Escalation: ${s.escalation.eligible} eligible · ${s.escalation.attempted} attempted · ${s.escalation.confirmed} confirmed · ${s.escalation.cleared} cleared · ${s.escalation.pending} pending (${s.escalation.blocked} blocked, ${s.escalation.timeout} timeout)`);
+  L.push(`Framing Integrity · broad ${fmtRange(fi.broad?.low, fi.broad?.high)}% (95% CI ${fmtRange(fi.broad?.ci?.lo, fi.broad?.ci?.hi)}, balanced ${fi.broad?.balanced?.value ?? '—'}% over ${fi.broad?.balanced?.qualified ?? 0} outlets) · strict ${fmtRange(fi.strict?.low, fi.strict?.high)}% (95% CI ${fmtRange(fi.strict?.ci?.lo, fi.strict?.ci?.hi)}) · n ${fi.broad?.n ?? 0} · unresolved ${fi.unresolved ?? 0} · v1 ${fi.v1 ?? '—'}% · coverage ${s.coverage ?? '—'}%`);
+  L.push(`Escalation: ${s.escalation.eligible} eligible · ${s.escalation.attempted} attempted · ${s.escalation.confirmed} confirmed · ${s.escalation.cleared} cleared · ${s.escalation.reclassified} reclassified · ${s.escalation.pending} pending · ${s.escalation.unresolved} unresolved (${s.escalation.blocked} blocked, ${s.escalation.timeout} timeout)`);
+  L.push(`Audit: ${s.audit.sampledThisRun} sampled this run · ${s.audit.present} present · ${s.audit.scored} scored · ${s.audit.overturned} overturned (${s.audit.overturnPct ?? '—'}%) · ${s.audit.changed} changed`);
+  L.push(`Extraction: ${s.extraction.successes}/${s.extraction.attempts} fetched (${s.extraction.successPct ?? '—'}%)`);
+  if (s.slam.test) {
+    const t = s.slam.test;
+    L.push(`Slam: index ${s.slam.index ?? '—'}% · ${t.underpowered ? `underpowered (${t.nFlagged} flagged)` : `gap ${t.observedDiff} (CI ${fmtRange(t.ci.lo, t.ci.hi)}), p = ${t.p}, within-outlet permutation, consistency check`}`);
+  }
+  if (s.golden) {
+    const g = s.golden;
+    L.push(`Golden set: ${g.scored}/${g.n} scored · agreement vs baseline ${g.agreementPct ?? '— (baseline written this run)'}% · vs authoring intent ${g.expectedAgreementPct ?? '—'}% · drift F ${g.fidelityDrift ?? '—'} S ${g.sensDrift ?? '—'} C ${g.clickDrift ?? '—'}${g.alert ? ' · **ALERT**' : ''} · $${g.costUsd}`);
+  }
   L.push('');
   L.push('## Tokens and cost');
   L.push('');
@@ -109,26 +126,50 @@ async function main() {
 
   const now = Date.now();
   const reuseMs = REUSE_WINDOW_HOURS * 60 * 60 * 1000;
+  const windowMs = Math.max(reuseMs, SCORECARD_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   // Scan files are deltas; resolve carried references against the window and
-  // the previous full view before carry-forward and aggregation.
+  // the previous full view before carry-forward, scorecards and aggregation.
   const previousLatest = await readLatest({ root });
-  const priorRuns = resolveRuns(await readRecentScans({ root, now, windowMs: reuseMs }), { latest: previousLatest });
-  const { run, rows, delta } = await runScan({ scorer, priorRuns, limit, log });
+  const window = resolveRuns(await readRecentScans({ root, now, windowMs }), { latest: previousLatest });
+  const priorRuns = window.filter((r) => Date.parse(r.startedAt) >= now - reuseMs);
 
-  const scanPath = await writeScan(run, delta, { root });
-  const historyPath = await appendHistory(historyRecord(run), { root });
-  const latestPath = await writeLatest(run, rows, { root });
+  // Golden set: scored on the configured cadence; the baseline is written once.
+  const runIndex = await countHistoryRuns({ root });
+  let golden = null;
+  if (!dryRun) {
+    try {
+      golden = { set: await readGoldenSet({ root }), baseline: await readBaseline({ root }), every: GOLDEN_EVERY_N_RUNS };
+    } catch (e) {
+      log(`[signal] golden set unavailable: ${e.message}`);
+    }
+  }
+
+  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex });
+
+  const paths = [];
+  paths.push(await writeScan(run, delta, { root }));
+  paths.push(await appendHistory(historyRecord(run), { root }));
+  paths.push(await appendStats(statsRecord(run), { root }));
+  if (goldenReport && !golden?.baseline) {
+    const written = await writeBaselineIfAbsent({ runId: run.id, writtenAt: run.finishedAt, version: goldenReport.version, model: goldenReport.model, promptHash: goldenReport.promptHash, results: goldenReport.results }, { root });
+    if (written) log('[signal] golden baseline written (first scoring run)');
+  }
+
   const after = Date.now();
-  const recent = resolveRuns(await readRecentScans({ root, now: after, windowMs: reuseMs }), { latest: { rows } }).filter(
-    (r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000
-  );
-  const aggregatePath = await writeAggregate(computeAggregate(recent, { now: after }), { root });
-  const paths = [scanPath, historyPath, latestPath, aggregatePath];
+  const allRuns = resolveRuns(await readRecentScans({ root, now: after, windowMs }), { latest: { rows } });
+  const scorecards = buildScorecards(allRuns.filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3));
+  paths.push(await writeLatest({ ...run, scorecards }, rows, { root }));
+  const recent = allRuns.filter((r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000);
+  paths.push(await writeAggregate(computeAggregate(recent, { now: after }), { root }));
+  // Daily tone summary for the site's tone trail: recompute the days the
+  // reuse window covers, keep older days as recorded.
+  paths.push(await writeDaily(updateDaily(await readDaily({ root }), allRuns.filter((r) => Date.parse(r.startedAt) >= after - reuseMs), { now: after }), { root }));
 
   log(`[signal] wrote ${paths.join(', ')}`);
   const s = run.summary;
+  const fi = s.framingIntegrity;
   log(
-    `[signal] FI v2 ${s.framingIntegrity.v2Low ?? '—'}–${s.framingIntegrity.v2High ?? '—'}% (n ${s.framingIntegrity.v2N}) · v1 ${s.framingIntegrity.v1 ?? '—'}% · coverage ${s.coverage ?? '—'}% · feeds ${s.feeds.live}/${s.feeds.total} live (${s.feeds.blocked} blocked) · tokens ${s.usage.input}/${s.usage.output} · $${s.costUsd}`
+    `[signal] FI broad ${fmtRange(fi.broad?.low, fi.broad?.high)}% strict ${fmtRange(fi.strict?.low, fi.strict?.high)}% (n ${fi.broad?.n}) · v1 ${fi.v1 ?? '—'}% · coverage ${s.coverage ?? '—'}% · feeds ${s.feeds.live}/${s.feeds.total} live (${s.feeds.blocked} blocked) · tokens ${s.usage.input}/${s.usage.output} · $${s.costUsd}`
   );
 
   if (reportPath) {

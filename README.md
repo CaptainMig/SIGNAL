@@ -69,6 +69,45 @@ run already scored the same row id with the same title, model, and prompt
 hash, that score is carried into the new run (`carriedFrom`) and no tokens are
 spent. A headline edit, prompt edit, or model change forces a fresh score.
 
+## Methodology v2 statistics (phase 2)
+
+- **Two Framing Integrity definitions**, never merged: strict (VERIFIED only)
+  and broad (VERIFIED + CONTEXTUAL). Each is a PROVISIONAL-OUTCOME RANGE
+  (pending rows counted bad for the low bound, good for the high) with a
+  separate 95% sampling interval from a seeded cluster bootstrap that
+  resamples outlets (2000 iterations). UNRESOLVED rows (flagged, article
+  never obtained after 4 attempts) are out of both and counted beside them.
+- **Outlet identity** is the `outlet` key in `pipeline/config.js`; the three
+  Washington Post feeds are one outlet, the two BBC feeds one outlet.
+- **Outlet-balanced mean** over outlets with at least 5 text rows in the
+  run; the count of qualifying outlets is published.
+- **Scorecards** over a rolling 7 days: ranked only at n ≥ 20 rows with text
+  and ≥ 3 distinct observation days; below that, progress ("12 of 20 · 2 of
+  3 days"). Ranked rates are beta-binomial shrunk toward the pooled rate
+  (strength 20) and carry Wilson intervals. Written to `latest.json` as
+  `scorecards`.
+- **Escalation** of PROVISIONAL, CONTESTED and CONTEXTUAL-with-fidelity ≤ 6
+  rows; the full sweep × full-text matrix is stored. Cleared means the full
+  text returned VERIFIED or CONTEXTUAL, nothing else; confirmed means the
+  same verdict (MISLEADING for PROVISIONAL); anything else is reclassified.
+- **Audit sample**: a seeded, stratified sample of sweep VERIFIED and
+  CONTEXTUAL rows (10 per run for the first 14 days, then 5) sent to full
+  text; overturn rate published; audit rows stay out of the matrix.
+- **Slam gap**: within-outlet permutation test, p = (count + 1) /
+  (iterations + 1), mean difference with a cluster-bootstrap interval,
+  labelled a consistency check.
+- **Golden set**: 50 frozen synthetic pairs (`data/golden/set.json`) scored
+  in full-text mode every run (`SIGNAL_GOLDEN_EVERY=24` for daily). The first
+  scoring run writes `data/golden/baseline.json`, never rewritten; later
+  runs report verdict agreement and axis drift against it; agreement below
+  90% is an alert.
+- **Extraction reliability**: success rate per run and per outlet.
+- **`data/stats.csv`**: one row per run of all of the above, frozen columns,
+  append-only, keyed by `run_id`. `history.csv` is unchanged; its reserved
+  columns are now filled.
+- `node scripts/report-daily.js` reports runs, rows, tokens and cost per UTC
+  day from `history.csv`.
+
 ## Numbers in `history.csv`
 
 - `fi_v2_low` / `fi_v2_high`: Framing Integrity v2 over rows with article
