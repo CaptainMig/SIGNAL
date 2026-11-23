@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+<channel>
+<title>Feed A</title>
+<item>
+<title><![CDATA[Senate passes budget bill after late-night session]]></title>
+<link>https://www.example-a.com/politics/budget-bill?utm_source=rss&amp;utm_medium=feed</link>
+<pubDate>FRESH_1</pubDate>
+<description><![CDATA[<p>The Senate passed the budget bill 52&#8211;48 after a late-night session, sending it to the House.</p>]]></description>
+</item>
+<item>
+<title>Mayor slams council over transit vote &amp; budget</title>
+<link>https://www.example-a.com/local/transit-vote#comments</link>
+<pubDate>FRESH_2</pubDate>
+<description>The mayor criticized the council&apos;s decision in sharp terms.</description>
+</item>
+<item>
+<title>Old story from last month that should be dropped</title>
+<link>https://www.example-a.com/old/story</link>
+<pubDate>STALE_1</pubDate>
+<description>Stale.</description>
+</item>
+<item>
+<title>&lt;a href="x"&gt;junk&lt;/a&gt;</title>
+<link>https://www.example-a.com/junk</link>
+<pubDate>FRESH_1</pubDate>
+</item>
+<item>
+<title>Short</title>
+<link>https://www.example-a.com/short</link>
+<pubDate>FRESH_1</pubDate>
+</item>
+<item>
+<title>Undated item kept but tagged as undated for honesty</title>
+<link>https://www.example-a.com/undated</link>
+<description>No date on this one.</description>
+</item>
+</channel>
+</rss>

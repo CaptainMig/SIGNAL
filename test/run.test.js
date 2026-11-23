@@ -1,0 +1,175 @@
+// End-to-end: feeds → dedupe → sweep → escalate → run record, with a mocked
+// network and a mocked model. Then a second run proves carry-forward.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { runScan } from '../pipeline/run.js';
+import { createScorer } from '../pipeline/scorer.js';
+import { fixture, mockClient, mockFetch, NOW } from './helpers.js';
+
+const thin = (title) =>
+  `<rss><channel><item><title>${title}</title><link>https://news.google.com/rss/articles/XYZ?oc=5</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>snippet</description></item></channel></rss>`;
+
+const FEEDS = [
+  { name: 'A', owner: 'Owner A', url: 'https://feed-a/' },
+  { name: 'B', owner: 'Owner B', url: 'https://feed-b/' },
+  { name: 'Wire', owner: 'Owner W', url: 'https://feed-wire/', thinBody: true },
+  { name: 'Dead', owner: 'Owner D', url: 'https://feed-dead/' },
+];
+
+function network(overrides = {}) {
+  return mockFetch({
+    'https://feed-a/': { status: 200, body: fixture('feed-a.xml') },
+    'https://feed-b/': { status: 200, body: fixture('feed-b.xml') },
+    'https://feed-wire/': { status: 200, body: thin('Wire: markets rally as talks resume - AP News') },
+    'https://feed-dead/': { status: 503, body: '' },
+    'https://www.example-a.com/local/transit-vote': { status: 200, body: fixture('article.html') },
+    'https://example-b.com/fire-warehouse': { status: 200, body: fixture('stub.html') },
+    ...overrides,
+  });
+}
+
+function model() {
+  return mockClient((req) => {
+    const headline = req.messages[0].content.split('\n')[0].replace('HEADLINE: ', '');
+    const tone = !req.output_config.format.schema.required.includes('verdict');
+    const fulltext = req.system[0].text.includes('FULL-TEXT MODE');
+    if (tone) return { sensationalism: 3, clickbait: 2, rationale: 'flat' };
+    if (headline.startsWith('Mayor slams')) {
+      return fulltext
+        ? { verdict: 'MISLEADING', fidelity: 2, sensationalism: 8, clickbait: 5, rationale: 'The body does not support the headline.' }
+        : { verdict: 'MISLEADING', fidelity: 3, sensationalism: 7, clickbait: 4, rationale: 'inverts' };
+    }
+    if (headline.startsWith('Fire guts')) return { verdict: 'CONTESTED', fidelity: 6, sensationalism: 5, clickbait: 3, rationale: 'disputed' };
+    return { verdict: 'VERIFIED', fidelity: 9, sensationalism: 1, clickbait: 1, rationale: 'fine' };
+  });
+}
+
+let clock = NOW;
+const now = () => (clock += 1000);
+
+test('a full run: rows, modes, escalation outcomes, finals, summary', async () => {
+  const client = model();
+  const scorer = createScorer({ client, model: 'claude-sonnet-5-5', now });
+  const { run, rows } = await runScan({ scorer, fetch: network(), now, feeds: FEEDS, model: 'claude-sonnet-5-5' });
+
+  assert.equal(run.id, '2026-11-23T17');
+  assert.equal(run.methodology, 'v2');
+  assert.equal(run.model, 'claude-sonnet-5-5');
+  assert.equal(run.dryRun, false);
+  assert.equal(run.feeds.length, 4);
+  assert.equal(run.feeds.find((f) => f.name === 'Dead').status, 'dead');
+
+  const byLink = Object.fromEntries(rows.map((r) => [r.canonical, r]));
+  assert.equal(rows.length, 5);
+  assert.ok(rows.every((r) => !('summary' in r)), 'no article text or snippet is stored');
+
+  const budget = byLink['https://example-a.com/politics/budget-bill'];
+  assert.equal(budget.sweep.mode, 'sweep');
+  assert.equal(budget.final.verdict, 'VERIFIED');
+  assert.equal(budget.final.source, 'sweep');
+  assert.equal(budget.sweep.model, 'claude-sonnet-5-5');
+  assert.equal(budget.sweep.promptHash, scorer.promptHashes.sweep);
+  assert.equal(budget.escalation.eligible, false);
+
+  const transit = byLink['https://example-a.com/local/transit-vote'];
+  assert.equal(transit.slam.term, 'slams');
+  assert.equal(transit.sweep.verdict, 'PROVISIONAL', 'sweep MISLEADING is provisionalized');
+  assert.equal(transit.sweep.provisional, true);
+  assert.equal(transit.fulltext.verdict, 'MISLEADING');
+  assert.ok(transit.fulltext.chars > 400);
+  assert.deepEqual(transit.escalation, { eligible: true, sweepVerdict: 'PROVISIONAL', outcome: 'confirmed' });
+  assert.equal(transit.final.verdict, 'MISLEADING');
+  assert.equal(transit.final.source, 'fulltext');
+
+  const fire = byLink['https://example-b.com/fire-warehouse'];
+  assert.equal(fire.slam.matched, false, 'fire guts warehouse is literal');
+  assert.equal(fire.sweep.verdict, 'CONTESTED');
+  assert.equal(fire.fulltext, null);
+  assert.deepEqual([fire.fulltextError.reason, fire.fulltextError.detail, fire.fulltextError.stage], ['blocked', 'stub', 'extract']);
+  assert.equal(fire.escalation.outcome, 'pending');
+  assert.equal(fire.final.verdict, 'CONTESTED');
+  assert.equal(fire.final.source, 'sweep');
+
+  const wire = byLink['https://news.google.com/rss/articles/XYZ'];
+  assert.equal(wire.thinBody, true);
+  assert.equal(wire.sweep.mode, 'tone');
+  assert.equal(wire.final.verdict, null);
+  assert.equal(wire.final.fidelity, null);
+  assert.equal(wire.final.source, 'tone');
+  assert.equal(wire.final.sens, 3);
+
+  const undated = byLink['https://example-a.com/undated'];
+  assert.equal(undated.undated, true);
+  assert.equal(undated.final.verdict, 'VERIFIED');
+
+  assert.equal(client.requests.length, 6, '5 sweep calls + 1 full-text call');
+  assert.equal(scorer.samples.length, 1, 'one raw model response is kept for the run report');
+  assert.equal(scorer.samples[0].stopReason, 'end_turn');
+  assert.ok(scorer.samples[0].text.startsWith('{'));
+
+  const s = run.summary;
+  assert.deepEqual(s.rows, { total: 5, scored: 5, unscored: 0, fulltext: 1, feedSummary: 3, headlineOnly: 1, withText: 4 });
+  assert.deepEqual(s.verdicts, { VERIFIED: 2, CONTEXTUAL: 0, CONTESTED: 1, UNVERIFIED: 0, PROVISIONAL: 0, MISLEADING: 1 });
+  assert.equal(s.framingIntegrity.v2Low, 50);
+  assert.equal(s.framingIntegrity.v2High, 50);
+  assert.equal(s.framingIntegrity.v1, 60);
+  assert.equal(s.coverage, 80);
+  assert.deepEqual([s.escalation.eligible, s.escalation.attempted, s.escalation.confirmed, s.escalation.cleared, s.escalation.pending, s.escalation.blocked], [2, 2, 1, 0, 1, 1]);
+  assert.deepEqual(s.usage, { input: 600, output: 240, cacheRead: 4800, cacheWrite: 0, calls: 6 });
+  assert.equal(s.costUsd, 0.00408);
+  assert.deepEqual(s.feeds, { total: 4, live: 3, stale: 0, blocked: 0, dead: 1 });
+});
+
+test('carry-forward: a prior run supplies unchanged scores; a headline edit forces a re-score', async () => {
+  const client1 = model();
+  const scorer1 = createScorer({ client: client1, model: 'claude-sonnet-5-5', now });
+  const first = await runScan({ scorer: scorer1, fetch: network(), now, feeds: FEEDS, model: 'claude-sonnet-5-5' });
+  const prior = [{ ...first.run, rows: first.rows }];
+
+  const client2 = model();
+  const scorer2 = createScorer({ client: client2, model: 'claude-sonnet-5-5', now });
+  const fetch2 = network();
+  const second = await runScan({ scorer: scorer2, fetch: fetch2, now, feeds: FEEDS, priorRuns: prior, model: 'claude-sonnet-5-5' });
+  assert.equal(client2.requests.length, 0, 'nothing changed → no tokens spent');
+  assert.ok(!fetch2.calls.some((u) => u.includes('example-b.com/fire-warehouse')), 'SOURCE BLOCKED is not re-fetched');
+  const transit = second.rows.find((r) => r.canonical === 'https://example-a.com/local/transit-vote');
+  assert.equal(transit.sweep.carriedFrom, first.run.id);
+  assert.equal(transit.fulltext.carriedFrom, first.run.id);
+  assert.equal(transit.sweep.usage, null);
+  assert.equal(transit.escalation.outcome, 'confirmed');
+  assert.equal(second.run.summary.usage.calls, 0);
+  assert.equal(second.run.summary.costUsd, 0);
+  assert.equal(second.run.summary.framingIntegrity.v2Low, 50, 'carried rows still count in the summary');
+
+  // Headline edited at the source → that row is re-scored, the rest carried.
+  const edited = fixture('feed-a.xml').replace('Senate passes budget bill after late-night session', 'Senate narrowly passes budget bill in overnight vote');
+  const client3 = model();
+  const scorer3 = createScorer({ client: client3, model: 'claude-sonnet-5-5', now });
+  const third = await runScan({ scorer: scorer3, fetch: network({ 'https://feed-a/': { status: 200, body: edited } }), now, feeds: FEEDS, priorRuns: prior, model: 'claude-sonnet-5-5' });
+  assert.equal(client3.requests.length, 1);
+  const budget = third.rows.find((r) => r.canonical === 'https://example-a.com/politics/budget-bill');
+  assert.equal(budget.title, 'Senate narrowly passes budget bill in overnight vote');
+  assert.equal(budget.sweep.carriedFrom, undefined);
+
+  // A different model → nothing is carried.
+  const client4 = model();
+  const scorer4 = createScorer({ client: client4, model: 'claude-other', now });
+  await runScan({ scorer: scorer4, fetch: network(), now, feeds: FEEDS, priorRuns: prior, model: 'claude-other' });
+  assert.equal(client4.requests.length, 6);
+});
+
+test('dry run scores nothing and marks every row UNSCORED (dry_run)', async () => {
+  const { run, rows } = await runScan({ scorer: null, fetch: network(), now, feeds: FEEDS });
+  assert.equal(run.dryRun, true);
+  assert.ok(rows.every((r) => r.final.source === 'unscored' && r.sweepError.reason === 'dry_run'));
+  assert.equal(run.summary.rows.unscored, 5);
+  assert.equal(run.summary.costUsd, 0);
+});
+
+test('limit caps the rows scored', async () => {
+  const client = model();
+  const scorer = createScorer({ client, now });
+  const { rows } = await runScan({ scorer, fetch: network(), now, feeds: FEEDS, limit: 2 });
+  assert.equal(rows.length, 2);
+  assert.equal(client.requests.length, 3, '2 sweep calls + 1 full-text call for the PROVISIONAL row');
+});

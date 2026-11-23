@@ -1,0 +1,15 @@
+{
+  "asOf": null,
+  "windowHours": 24,
+  "scored": 0,
+  "total": 0,
+  "meanIntegrity": null,
+  "medianIntegrity": null,
+  "meanIntegrityV2": null,
+  "medianIntegrityV2": null,
+  "scoredAny": 0,
+  "runs": 0,
+  "methodology": "v2",
+  "source": "seed",
+  "note": "Seed written before the first scheduled run. scored: 0 deliberately trips the anthonycharts generator's thin-sample guard so the published meter never moves on missing data."
+}
