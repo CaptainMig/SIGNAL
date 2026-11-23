@@ -4,9 +4,14 @@
 # dispatchable. The run report lands in the Actions job summary.
 name: scan
 
+# GitHub runs a schedule as the author of the last commit that touched this
+# file on the default branch. That author must be an account with write access
+# to the repository; a commit under an unlinked or foreign identity leaves the
+# schedule registered but never fired (DEFECTS.md v2-30). Re-commit the cron
+# line from the operator's account after any change to this file.
 on:
   schedule:
-    - cron: '7 * * * *' # hourly at :07 UTC, off the top of the hour to dodge runner congestion
+    - cron: '7 * * * *' # hourly at :07 UTC; off the top of the hour to dodge runner congestion
   workflow_dispatch:
     inputs:
       dry_run:
@@ -78,8 +83,8 @@ jobs:
       - name: Commit ledger
         if: steps.key.outputs.present == 'true'
         run: |
-          git config user.name "signal-scan"
-          git config user.email "signal-scan@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data
           if git diff --cached --quiet; then
             echo "nothing to commit"
