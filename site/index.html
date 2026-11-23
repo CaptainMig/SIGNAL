@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal · Media Integrity Scanner</title>
+<meta name="description" content="Signal scores how closely a headline matches its own article, not whether the news is true. Scheduled scans, an append-only ledger, every number with its sample size.">
+<meta property="og:title" content="Signal — Media Integrity Scanner">
+<meta property="og:description" content="Scores how closely a headline matches its own article — not whether the news is true.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0f0d0a">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app" class="wrap">
+  <header class="site-header">
+    <div class="brand">
+      <div class="brand-name">Signal</div>
+      <div class="brand-sub mono">MEDIA INTEGRITY SCANNER · STARPOINT</div>
+    </div>
+    <nav class="nav mono" aria-label="Sections"></nav>
+  </header>
+  <div class="chips mono" id="chips"></div>
+  <main id="main" aria-live="polite">
+    <p class="mono muted loading">LOADING LEDGER…</p>
+  </main>
+  <footer class="site-footer">
+    <div class="foot-copy">Signal scores how closely a headline matches its own article — not whether the news is true. Every number shows its sample size and the time it was measured.</div>
+    <div class="mono foot-tag">STARPOINT LLC · METHODOLOGY V2</div>
+  </footer>
+</div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

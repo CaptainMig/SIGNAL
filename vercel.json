@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "site",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)data'",
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/headlines", "destination": "/index.html" },
+    { "source": "/outlets", "destination": "/index.html" },
+    { "source": "/method", "destination": "/index.html" },
+    { "source": "/article/:id", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    }
+  ],
+  "functions": {
+    "api/data.js": { "memory": 256, "maxDuration": 10 },
+    "api/aggregate.js": { "memory": 256, "maxDuration": 10 },
+    "api/meta.js": { "memory": 256, "maxDuration": 5 }
+  }
+}
