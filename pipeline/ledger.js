@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
 // The ledger. Append-only, in the repo:
-//   data/scans/YYYY-MM-DD/HH.json   every row + run telemetry (never rewritten;
+//   data/scans/YYYY-MM-DD/HH.json   run telemetry + the rows scored or
+//                                   re-scored this run; carried rows are
+//                                   referenced by { id, run } (never rewritten;
 //                                   a second run in the same UTC hour writes
 //                                   HH.2.json rather than overwriting)
 //   data/history.csv                one row per run, columns frozen below,
@@ -57,10 +59,14 @@ async function exists(p) {
 }
 
 /**
- * Write a scan file. Never overwrites: if HH.json exists, writes HH.2.json,
- * HH.3.json, … Returns the path written (repo-relative when root is '.').
+ * Write a scan file (a delta: `rows` are the rows produced this run,
+ * `carried` references the rest by { id, run }). Never overwrites: if HH.json
+ * exists, writes HH.2.json, HH.3.json, … Returns the path written.
+ * `payload` may also be a plain rows array (carried: []).
  */
-export async function writeScan(run, rows, { root = '.' } = {}) {
+export async function writeScan(run, payload, { root = '.' } = {}) {
+  const rows = Array.isArray(payload) ? payload : payload?.rows || [];
+  const carried = Array.isArray(payload) ? [] : payload?.carried || [];
   const paths = ledgerPaths(root);
   const { dir, file } = scanPathFor(run.startedAt, paths);
   await fs.mkdir(dir, { recursive: true });
@@ -70,9 +76,41 @@ export async function writeScan(run, rows, { root = '.' } = {}) {
     n++;
     target = path.join(dir, file.replace(/\.json$/, `.${n}.json`));
   }
-  const payload = { ...run, rows };
-  await fs.writeFile(target, JSON.stringify(payload) + '\n');
+  await fs.writeFile(target, JSON.stringify({ ...run, rows, carried }) + '\n');
   return target;
+}
+
+// The full current view, or null when no run has been written yet.
+export async function readLatest({ root = '.' } = {}) {
+  const paths = ledgerPaths(root);
+  try {
+    const parsed = JSON.parse(await fs.readFile(paths.latest, 'utf8'));
+    return parsed && Array.isArray(parsed.rows) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Expand delta scan files into full row sets: each run's own rows plus every
+ * carried reference resolved against the run named in the reference, falling
+ * back to `latest` (the full current view). References that resolve nowhere
+ * are counted in `unresolvedCarried`, never fabricated.
+ */
+export function resolveRuns(runs, { latest = null } = {}) {
+  const byRunAndId = new Map();
+  for (const run of runs) for (const row of run.rows || []) byRunAndId.set(`${run.id}\n${row.id}`, row);
+  const latestById = new Map((latest?.rows || []).map((r) => [r.id, r]));
+  return runs.map((run) => {
+    const rows = [...(run.rows || [])];
+    let unresolvedCarried = 0;
+    for (const ref of run.carried || []) {
+      const row = byRunAndId.get(`${ref.run}\n${ref.id}`) || latestById.get(ref.id);
+      if (row) rows.push(row);
+      else unresolvedCarried++;
+    }
+    return { ...run, rows, unresolvedCarried };
+  });
 }
 
 export function csvEscape(v) {

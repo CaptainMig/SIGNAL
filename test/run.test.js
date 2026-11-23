@@ -50,7 +50,7 @@ const now = () => (clock += 1000);
 test('a full run: rows, modes, escalation outcomes, finals, summary', async () => {
   const client = model();
   const scorer = createScorer({ client, model: 'claude-sonnet-5-5', now });
-  const { run, rows } = await runScan({ scorer, fetch: network(), now, feeds: FEEDS, model: 'claude-sonnet-5-5' });
+  const { run, rows, delta } = await runScan({ scorer, fetch: network(), now, feeds: FEEDS, model: 'claude-sonnet-5-5' });
 
   assert.equal(run.id, '2026-11-23T17');
   assert.equal(run.methodology, 'v2');
@@ -61,7 +61,23 @@ test('a full run: rows, modes, escalation outcomes, finals, summary', async () =
 
   const byLink = Object.fromEntries(rows.map((r) => [r.canonical, r]));
   assert.equal(rows.length, 5);
-  assert.ok(rows.every((r) => !('summary' in r)), 'no article text or snippet is stored');
+
+  // No article text ever reaches a ledger row: not the feed snippet, not the
+  // extracted body. Only the headline, link, outlet, scores, verdict,
+  // rationale, and the body's character count.
+  const serialized = JSON.stringify(rows);
+  assert.ok(!serialized.includes('The Senate passed the budget bill 52'), 'feed summary must not be stored');
+  assert.ok(!serialized.includes('late-night session that stretched'), 'extracted article text must not be stored');
+  assert.ok(!serialized.includes('Subscribe to continue'), 'stub text must not be stored');
+  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn'];
+  for (const r of rows) for (const k of Object.keys(r)) assert.ok(ALLOWED.includes(k), `unexpected row field ${k}`);
+  const SCORE_KEYS = ['mode', 'verdict', 'fidelity', 'sens', 'click', 'rationale', 'provisional', 'model', 'promptHash', 'usage', 'latencyMs', 'at', 'chars', 'carriedFrom'];
+  for (const r of rows) for (const s of [r.sweep, r.fulltext]) if (s) for (const k of Object.keys(s)) assert.ok(SCORE_KEYS.includes(k), `unexpected score field ${k}`);
+
+  // First run: every row is fresh, so the delta is the whole run.
+  assert.equal(delta.rows.length, 5);
+  assert.deepEqual(delta.carried, []);
+  assert.ok(rows.every((r) => r.writtenIn === run.id));
 
   const budget = byLink['https://example-a.com/politics/budget-bill'];
   assert.equal(budget.sweep.mode, 'sweep');
@@ -140,6 +156,11 @@ test('carry-forward: a prior run supplies unchanged scores; a headline edit forc
   assert.equal(second.run.summary.usage.calls, 0);
   assert.equal(second.run.summary.costUsd, 0);
   assert.equal(second.run.summary.framingIntegrity.v2Low, 50, 'carried rows still count in the summary');
+  // Delta: nothing fresh, five references to the run that holds the full rows.
+  assert.deepEqual(second.delta.rows, []);
+  assert.equal(second.delta.carried.length, 5);
+  assert.ok(second.delta.carried.every((c) => c.run === first.run.id));
+  assert.ok(second.rows.every((r) => r.writtenIn === first.run.id));
 
   // Headline edited at the source → that row is re-scored, the rest carried.
   const edited = fixture('feed-a.xml').replace('Senate passes budget bill after late-night session', 'Senate narrowly passes budget bill in overnight vote');
@@ -150,6 +171,17 @@ test('carry-forward: a prior run supplies unchanged scores; a headline edit forc
   const budget = third.rows.find((r) => r.canonical === 'https://example-a.com/politics/budget-bill');
   assert.equal(budget.title, 'Senate narrowly passes budget bill in overnight vote');
   assert.equal(budget.sweep.carriedFrom, undefined);
+  assert.deepEqual(third.delta.rows.map((r) => r.id), [budget.id], 'only the re-scored row is written in full');
+  assert.equal(third.delta.carried.length, 4);
+  assert.equal(budget.writtenIn, third.run.id);
+
+  // A chain of carries keeps pointing at the run that holds the full row.
+  const client5 = model();
+  const scorer5 = createScorer({ client: client5, model: 'claude-sonnet-5-5', now });
+  const fourth = await runScan({ scorer: scorer5, fetch: network(), now, feeds: FEEDS, priorRuns: [{ ...third.run, rows: third.rows }, ...prior], model: 'claude-sonnet-5-5' });
+  assert.equal(client5.requests.length, 1, 'the title reverted, so the budget row is re-scored; the rest is carried');
+  const transitRef = fourth.delta.carried.find((c) => c.id === transit.id);
+  assert.equal(transitRef.run, first.run.id, 'carried through the third run, still referenced to the first');
 
   // A different model → nothing is carried.
   const client4 = model();
@@ -159,8 +191,9 @@ test('carry-forward: a prior run supplies unchanged scores; a headline edit forc
 });
 
 test('dry run scores nothing and marks every row UNSCORED (dry_run)', async () => {
-  const { run, rows } = await runScan({ scorer: null, fetch: network(), now, feeds: FEEDS });
+  const { run, rows, delta } = await runScan({ scorer: null, fetch: network(), now, feeds: FEEDS });
   assert.equal(run.dryRun, true);
+  assert.equal(delta.rows.length, 5, 'dry-run rows carry an error, so they are written in full');
   assert.ok(rows.every((r) => r.final.source === 'unscored' && r.sweepError.reason === 'dry_run'));
   assert.equal(run.summary.rows.unscored, 5);
   assert.equal(run.summary.costUsd, 0);

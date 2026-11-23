@@ -13,6 +13,11 @@
 // model changes all force a fresh score. SOURCE BLOCKED extraction failures
 // are carried too (the publisher's policy does not change hourly); timeouts
 // and transient errors are retried.
+//
+// Scan files are deltas: run telemetry plus only the rows that were scored or
+// re-scored this run. A carried row is referenced by article id and the run
+// whose scan file holds its full record (`writtenIn`). latest.json is always
+// the full current view.
 // ---------------------------------------------------------------------------
 import { EXTRACT_CONCURRENCY, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS } from './config.js';
 import { collectHeadlines } from './feeds.js';
@@ -92,6 +97,17 @@ function finalize(row) {
   return { verdict: null, fidelity: null, sens: null, click: null, rationale: '', source: 'unscored', provisional: false, reason: row.sweepError?.reason || 'unscored' };
 }
 
+// A row is written in full when something about it was produced THIS run: a
+// fresh sweep, a fresh full-text score, or any error (errors are never
+// carried, except SOURCE BLOCKED, which is marked carriedFrom).
+export function isFreshRow(row) {
+  if (row.sweepError) return true;
+  if (row.sweep && !row.sweep.carriedFrom) return true;
+  if (row.fulltext && !row.fulltext.carriedFrom) return true;
+  if (row.fulltextError && !row.fulltextError.carriedFrom) return true;
+  return false;
+}
+
 async function pool(items, concurrency, fn) {
   let next = 0;
   async function worker() {
@@ -144,13 +160,17 @@ export async function runScan({
   const prior = indexPriorRows(priorRuns);
   let carried = 0;
   for (const row of rows) {
-    const reuse = reusable(prior.get(row.id), row, hashes, model);
+    const entry = prior.get(row.id);
+    const reuse = reusable(entry, row, hashes, model);
     if (reuse?.sweep) {
       row.sweep = reuse.sweep;
       carried++;
     }
     if (reuse?.fulltext) row.fulltext = reuse.fulltext;
     if (reuse?.fulltextError) row.fulltextError = reuse.fulltextError;
+    if (reuse && (reuse.sweep || reuse.fulltext || reuse.fulltextError)) {
+      row.writtenIn = entry.row.writtenIn || entry.runId;
+    }
   }
   if (carried) log(`[signal] carried ${carried} sweep score(s) forward from prior runs`);
 
@@ -193,14 +213,22 @@ export async function runScan({
     row.escalation.outcome = escalationOutcome(row.sweep.verdict, row.fulltext?.verdict || null);
   }
 
-  for (const row of rows) row.final = finalize(row);
+  const id = runIdFor(startedAt);
+  for (const row of rows) {
+    row.final = finalize(row);
+    if (isFreshRow(row)) row.writtenIn = id;
+  }
   // The article body is never stored; the summary snippet is dropped too.
   for (const row of rows) delete row.summary;
+  const delta = {
+    rows: rows.filter(isFreshRow),
+    carried: rows.filter((r) => !isFreshRow(r)).map((r) => ({ id: r.id, run: r.writtenIn })),
+  };
 
   const finishedMs = now();
   const summary = summarizeRun({ rows, feeds: collected.feeds });
   const run = {
-    id: runIdFor(startedAt),
+    id,
     startedAt,
     finishedAt: new Date(finishedMs).toISOString(),
     durationMs: finishedMs - startedMs,
@@ -212,6 +240,6 @@ export async function runScan({
     feeds: collected.feeds,
     summary,
   };
-  log(`[signal] done in ${run.durationMs} ms · ${summary.rows.scored}/${summary.rows.total} scored · $${summary.costUsd}`);
-  return { run, rows };
+  log(`[signal] done in ${run.durationMs} ms · ${summary.rows.scored}/${summary.rows.total} scored · ${delta.rows.length} fresh row(s), ${delta.carried.length} carried · $${summary.costUsd}`);
+  return { run, rows, delta };
 }

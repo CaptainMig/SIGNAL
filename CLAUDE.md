@@ -46,8 +46,10 @@ fix is itself a defect.
   summarize). Pure modules with injected I/O; `scorer.js` is the only place
   that calls the model.
 - `scripts/scan.js` — the scheduled entry point; writes the ledger.
-- `data/` — the ledger: `scans/YYYY-MM-DD/HH.json`, `history.csv`,
-  `latest.json`, `aggregate.json`.
+- `data/` — the ledger: `scans/YYYY-MM-DD/HH.json` (deltas: telemetry plus
+  rows scored this run; carried rows referenced by `{ id, run }`),
+  `history.csv`, `latest.json` (full current view), `aggregate.json`.
+  Scan files never contain article text.
 - `test/` — `node --test` suites with fixed fixtures; every formula is tested.
 - `.github/workflows/scan.yml` — hourly scan; `test.yml` — CI.
 

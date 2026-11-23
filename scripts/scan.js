@@ -15,7 +15,7 @@
 import { promises as fs } from 'node:fs';
 import { runScan, REUSE_WINDOW_HOURS } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
-import { appendHistory, readRecentScans, writeAggregate, writeLatest, writeScan } from '../pipeline/ledger.js';
+import { appendHistory, readLatest, readRecentScans, resolveRuns, writeAggregate, writeLatest, writeScan } from '../pipeline/ledger.js';
 import { historyRecord } from '../pipeline/summarize.js';
 import { computeAggregate, WINDOW_HOURS } from '../pipeline/aggregate.js';
 
@@ -64,7 +64,7 @@ export function renderReport({ run, rows, scorer, paths }) {
   for (const r of rows) if (r.final?.source === 'unscored') reasons[r.final.reason] = (reasons[r.final.reason] || 0) + 1;
   if (Object.keys(reasons).length) L.push(`Unscored by reason: ${Object.entries(reasons).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   const carried = rows.filter((r) => r.sweep?.carriedFrom).length;
-  if (carried) L.push(`Carried forward from prior runs: ${carried} sweep score(s)`);
+  if (carried) L.push(`Carried forward from prior runs: ${carried} sweep score(s); the scan file holds ${rows.length - carried} full row(s) and ${carried} reference(s)`);
   L.push('');
   L.push(`Verdicts: ${Object.entries(s.verdicts).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
   L.push(`Framing Integrity v2 ${s.framingIntegrity.v2Low ?? '—'}–${s.framingIntegrity.v2High ?? '—'}% (n ${s.framingIntegrity.v2N}) · outlet-balanced ${s.framingIntegrity.outletBalanced ?? '—'}% · v1 ${s.framingIntegrity.v1 ?? '—'}% · coverage ${s.coverage ?? '—'}%`);
@@ -108,14 +108,21 @@ async function main() {
   }
 
   const now = Date.now();
-  const priorRuns = await readRecentScans({ root, now, windowMs: REUSE_WINDOW_HOURS * 60 * 60 * 1000 });
-  const { run, rows } = await runScan({ scorer, priorRuns, limit, log });
+  const reuseMs = REUSE_WINDOW_HOURS * 60 * 60 * 1000;
+  // Scan files are deltas; resolve carried references against the window and
+  // the previous full view before carry-forward and aggregation.
+  const previousLatest = await readLatest({ root });
+  const priorRuns = resolveRuns(await readRecentScans({ root, now, windowMs: reuseMs }), { latest: previousLatest });
+  const { run, rows, delta } = await runScan({ scorer, priorRuns, limit, log });
 
-  const scanPath = await writeScan(run, rows, { root });
+  const scanPath = await writeScan(run, delta, { root });
   const historyPath = await appendHistory(historyRecord(run), { root });
   const latestPath = await writeLatest(run, rows, { root });
-  const recent = await readRecentScans({ root, now: Date.now(), windowMs: WINDOW_HOURS * 60 * 60 * 1000 });
-  const aggregatePath = await writeAggregate(computeAggregate(recent), { root });
+  const after = Date.now();
+  const recent = resolveRuns(await readRecentScans({ root, now: after, windowMs: reuseMs }), { latest: { rows } }).filter(
+    (r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000
+  );
+  const aggregatePath = await writeAggregate(computeAggregate(recent, { now: after }), { root });
   const paths = [scanPath, historyPath, latestPath, aggregatePath];
 
   log(`[signal] wrote ${paths.join(', ')}`);

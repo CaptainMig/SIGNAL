@@ -30,6 +30,12 @@ GitHub Actions, hourly          scripts/scan.js
 - The ledger is append-only and lives in the repo. A scan file is never
   rewritten (a second run in the same UTC hour writes `HH.2.json`);
   `history.csv` rows are never edited; a column change is a new file.
+- Scan files are deltas: run telemetry plus only the rows scored or re-scored
+  in that run. Rows carried forward unchanged are listed in `carried` as
+  `{ id, run }`, where `run` is the scan file that holds the full record
+  (every row carries `writtenIn` for this). `latest.json` is always the full
+  current view; `pipeline/ledger.js` `resolveRuns` expands a window of delta
+  files back into full row sets for carry-forward and the aggregate.
 - Every scored row stores the model that served it and the prompt hash of the
   mode it was scored in, so a prompt edit or model change is visible in the data.
 - Phase 3 adds the static site (telemetry deck, headline table, article
@@ -80,7 +86,7 @@ spent. A headline edit, prompt edit, or model change forces a fresh score.
 
 ```bash
 npm install
-npm test                      # 61 tests, no network, no key
+npm test                      # 64 tests, no network, no key
 node scripts/scan.js --dry-run  # fetch and dedupe feeds, score nothing
 ANTHROPIC_API_KEY=… node scripts/scan.js   # a real run; writes data/
 ```
@@ -118,11 +124,13 @@ dropped) and `dead` (any other failure). `feeds_blocked` is a column in
   "fulltext": { "mode": "fulltext", "verdict": "MISLEADING", "chars": 4312, … },
   "fulltextError": null,            // or { reason: "blocked"|"timeout"|"error"|…, detail, stage }
   "escalation": { "eligible": true, "sweepVerdict": "PROVISIONAL", "outcome": "confirmed" },
-  "final": { "verdict": "MISLEADING", "fidelity": 2, "sens": 8, "click": 5, "source": "fulltext", "provisional": false }
+  "final": { "verdict": "MISLEADING", "fidelity": 2, "sens": 8, "click": 5, "source": "fulltext", "provisional": false },
+  "writtenIn": "2026-11-23T17"      // the scan file that holds this row in full
 }
 ```
 
-Article text is never stored; the ledger keeps only its length.
+Article text is never stored, neither the feed snippet nor the extracted
+body; the ledger keeps the body's character count only. A test pins this.
 
 ## Locked rules
 

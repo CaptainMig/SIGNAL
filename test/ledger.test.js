@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HISTORY_COLUMNS, appendHistory, csvEscape, ledgerPaths, readRecentScans, scanPathFor, toCsvLine, writeLatest, writeScan } from '../pipeline/ledger.js';
+import { HISTORY_COLUMNS, appendHistory, csvEscape, ledgerPaths, readLatest, readRecentScans, resolveRuns, scanPathFor, toCsvLine, writeLatest, writeScan } from '../pipeline/ledger.js';
 
 const tmp = () => fs.mkdtemp(path.join(os.tmpdir(), 'signal-ledger-'));
 const run = (startedAt, id = startedAt.slice(0, 13)) => ({ id, startedAt, finishedAt: startedAt, summary: {} });
@@ -61,6 +61,35 @@ test('readRecentScans returns runs in the window, newest first, skipping corrupt
   const runs = await readRecentScans({ root, now, windowMs: 24 * 3600e3 });
   assert.deepEqual(runs.map((r) => r.id), ['2026-11-23T12', '2026-11-23T11', '2026-11-22T13']);
   assert.deepEqual(await readRecentScans({ root: path.join(root, 'nope'), now }), []);
+});
+
+test('writeScan stores a delta: fresh rows plus carried references', async () => {
+  const root = await tmp();
+  const p = await writeScan(run('2026-11-23T06:00:00.000Z'), { rows: [{ id: 'fresh' }], carried: [{ id: 'old', run: '2026-11-23T04' }] }, { root });
+  const file = JSON.parse(await fs.readFile(p, 'utf8'));
+  assert.deepEqual(file.rows, [{ id: 'fresh' }]);
+  assert.deepEqual(file.carried, [{ id: 'old', run: '2026-11-23T04' }]);
+  const q = await writeScan(run('2026-11-23T07:00:00.000Z'), [{ id: 'x' }], { root });
+  assert.deepEqual(JSON.parse(await fs.readFile(q, 'utf8')).carried, []);
+});
+
+test('resolveRuns expands carried references from the named run, then latest, and counts the unresolvable', () => {
+  const a = { id: 'A', rows: [{ id: 'a', writtenIn: 'A' }, { id: 'b', writtenIn: 'A' }], carried: [] };
+  const b = { id: 'B', rows: [{ id: 'c', writtenIn: 'B' }], carried: [{ id: 'a', run: 'A' }, { id: 'zz', run: 'OLD' }] };
+  const withLatest = resolveRuns([b, a], { latest: { rows: [{ id: 'zz', writtenIn: 'OLD' }] } });
+  assert.deepEqual(withLatest[0].rows.map((r) => r.id), ['c', 'a', 'zz']);
+  assert.equal(withLatest[0].unresolvedCarried, 0);
+  assert.deepEqual(withLatest[1].rows.map((r) => r.id), ['a', 'b']);
+  const without = resolveRuns([b, a]);
+  assert.deepEqual(without[0].rows.map((r) => r.id), ['c', 'a']);
+  assert.equal(without[0].unresolvedCarried, 1, 'never fabricated');
+});
+
+test('readLatest returns the full view or null', async () => {
+  const root = await tmp();
+  assert.equal(await readLatest({ root }), null);
+  await writeLatest(run('2026-11-23T04:00:00.000Z'), [{ id: 'x' }], { root });
+  assert.equal((await readLatest({ root })).rows[0].id, 'x');
 });
 
 test('writeLatest overwrites in place', async () => {
