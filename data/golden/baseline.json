@@ -1,0 +1,459 @@
+{
+  "runId": "2026-11-23T20",
+  "writtenAt": "2026-11-23T20:10:51.017Z",
+  "version": 1,
+  "model": "claude-sonnet-5-5",
+  "promptHash": "d561d049b13f",
+  "results": [
+    {
+      "id": "g01",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 0,
+      "click": 0
+    },
+    {
+      "id": "g02",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g03",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 1,
+      "click": 1
+    },
+    {
+      "id": "g04",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g05",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 0,
+      "click": 0
+    },
+    {
+      "id": "g06",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 0,
+      "click": 0
+    },
+    {
+      "id": "g07",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g08",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g09",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "CONTESTED",
+      "fidelity": 7,
+      "sens": 2,
+      "click": 1
+    },
+    {
+      "id": "g10",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g11",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g12",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g13",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g14",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 10,
+      "sens": 0,
+      "click": 0
+    },
+    {
+      "id": "g15",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g16",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 1,
+      "click": 0
+    },
+    {
+      "id": "g17",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 2,
+      "click": 1
+    },
+    {
+      "id": "g18",
+      "expected": "VERIFIED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 2,
+      "click": 1
+    },
+    {
+      "id": "g19",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 6,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g20",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 4,
+      "sens": 5,
+      "click": 2
+    },
+    {
+      "id": "g21",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 7,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g22",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 5,
+      "sens": 3,
+      "click": 2
+    },
+    {
+      "id": "g23",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 6,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g24",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 6,
+      "sens": 5,
+      "click": 1
+    },
+    {
+      "id": "g25",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 8,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g26",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 5,
+      "sens": 3,
+      "click": 2
+    },
+    {
+      "id": "g27",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 7,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g28",
+      "expected": "CONTEXTUAL",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 7,
+      "sens": 2,
+      "click": 1
+    },
+    {
+      "id": "g29",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 1,
+      "sens": 7,
+      "click": 2
+    },
+    {
+      "id": "g30",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "CONTESTED",
+      "fidelity": 6,
+      "sens": 5,
+      "click": 2
+    },
+    {
+      "id": "g31",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 2,
+      "sens": 4,
+      "click": 1
+    },
+    {
+      "id": "g32",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "CONTESTED",
+      "fidelity": 5,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g33",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "CONTESTED",
+      "fidelity": 4,
+      "sens": 4,
+      "click": 1
+    },
+    {
+      "id": "g34",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "VERIFIED",
+      "fidelity": 9,
+      "sens": 2,
+      "click": 1
+    },
+    {
+      "id": "g35",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "CONTEXTUAL",
+      "fidelity": 7,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g36",
+      "expected": "CONTESTED",
+      "ok": true,
+      "verdict": "CONTESTED",
+      "fidelity": 4,
+      "sens": 4,
+      "click": 1
+    },
+    {
+      "id": "g37",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "UNVERIFIED",
+      "fidelity": 3,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g38",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "UNVERIFIED",
+      "fidelity": 4,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g39",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "UNVERIFIED",
+      "fidelity": 4,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g40",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 1,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g41",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "CONTESTED",
+      "fidelity": 2,
+      "sens": 3,
+      "click": 1
+    },
+    {
+      "id": "g42",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "UNVERIFIED",
+      "fidelity": 3,
+      "sens": 2,
+      "click": 1
+    },
+    {
+      "id": "g43",
+      "expected": "UNVERIFIED",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 2,
+      "sens": 8,
+      "click": 3
+    },
+    {
+      "id": "g44",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 1,
+      "sens": 7,
+      "click": 2
+    },
+    {
+      "id": "g45",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 1,
+      "sens": 8,
+      "click": 3
+    },
+    {
+      "id": "g46",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 1,
+      "sens": 8,
+      "click": 2
+    },
+    {
+      "id": "g47",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 1,
+      "sens": 8,
+      "click": 3
+    },
+    {
+      "id": "g48",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 0,
+      "sens": 6,
+      "click": 2
+    },
+    {
+      "id": "g49",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 0,
+      "sens": 8,
+      "click": 3
+    },
+    {
+      "id": "g50",
+      "expected": "MISLEADING",
+      "ok": true,
+      "verdict": "MISLEADING",
+      "fidelity": 0,
+      "sens": 6,
+      "click": 2
+    }
+  ]
+}
