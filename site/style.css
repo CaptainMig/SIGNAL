@@ -93,7 +93,7 @@ main > * { min-width: 0; }
 .readout-sub { font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--muted); }
 .readout-sub b { color: var(--text); font-weight: 500; }
 .readout-sub .definition { font-family: var(--sans); font-size: 13px; line-height: 1.45; color: var(--text); margin-bottom: 6px; }
-@media (min-width: 1024px) { .tier .readout:first-child { grid-column: span 2; } .tier .readout:first-child .readout-value { font-size: 64px; } }
+@media (min-width: 1024px) { .tier .readout:first-child .readout-value { font-size: 52px; } }
 
 /* Collapsible sections (details) */
 details.section { border: 0.5px solid var(--hair); padding: 0; }
