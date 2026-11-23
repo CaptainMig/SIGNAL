@@ -1,25 +1,49 @@
 // ---------------------------------------------------------------------------
 // Per-run summary computed from the run's rows and feed statuses. This is
-// what history.csv records (one row per run) and what latest.json carries as
-// `summary`. Pure; every number is derived from the ledger rows alone.
+// what history.csv and stats.csv record (one row per run each) and what
+// latest.json carries as `summary`. Pure; every number is derived from the
+// ledger rows alone, seeded where resampling is involved.
 // ---------------------------------------------------------------------------
-import { DISPLAY_VERDICTS } from './verdicts.js';
+import { DISPLAY_VERDICTS, MODEL_VERDICTS } from './verdicts.js';
+import { OUTLET_MIN_N } from './config.js';
 import {
   articleIntegrityV1,
   articleIntegrityV2,
+  countsForFI,
   coverage,
+  fiPoint,
+  framingIntegrity,
   framingIntegrityV1,
-  framingIntegrityV2,
-  hasText,
+  groupByOutlet,
   isScored,
   meanOf,
-  outletBalancedV2,
+  outletBalanced,
 } from './integrity.js';
 import { addUsage, costOf, emptyUsage } from './pricing.js';
+import { clusterBootstrap, permutationWithinOutlet } from './stats.js';
+import { OUTCOMES, SWEEP_FLAGS, emptyMatrix } from './escalate.js';
+import { seedFrom } from './prng.js';
 
 const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
 
-export function summarizeRun({ rows, feeds }) {
+function fiBlock(rows, definition, seed) {
+  const fi = framingIntegrity(rows, definition);
+  const groups = [...groupByOutlet(rows.filter(countsForFI)).values()];
+  const ci = clusterBootstrap(groups, (rs) => fiPoint(rs, definition), { seed: seedFrom(seed, definition) });
+  const balanced = outletBalanced(rows, definition);
+  return {
+    low: fi.low,
+    high: fi.high,
+    point: fi.point,
+    n: fi.n,
+    good: fi.good,
+    provisional: fi.provisional,
+    ci: { lo: round1(ci.lo), hi: round1(ci.hi), clusters: ci.clusters, iterations: ci.iterations },
+    balanced: { value: balanced.value, qualified: balanced.qualified, outlets: balanced.outlets, minN: balanced.minN },
+  };
+}
+
+export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, golden = null, auditSampled = 0 }) {
   const feedCounts = { total: feeds.length, live: 0, stale: 0, blocked: 0, dead: 0 };
   for (const f of feeds) feedCounts[f.status] = (feedCounts[f.status] || 0) + 1;
 
@@ -37,18 +61,24 @@ export function summarizeRun({ rows, feeds }) {
     attempted: 0,
     confirmed: 0,
     cleared: 0,
+    reclassified: 0,
     pending: 0,
+    unresolved: 0,
     blocked: 0,
     timeout: 0,
     error: 0,
-    bySweep: { PROVISIONAL: { confirmed: 0, cleared: 0, pending: 0 }, CONTESTED: { confirmed: 0, cleared: 0, pending: 0 } },
+    byReason: { provisional: 0, contested: 0, low_fidelity_contextual: 0 },
+    bySweep: Object.fromEntries(SWEEP_FLAGS.map((s) => [s, Object.fromEntries(OUTCOMES.map((o) => [o, 0]))])),
+    matrix: emptyMatrix(),
   };
+  const audit = { sampledThisRun: auditSampled, present: 0, scored: 0, changed: 0, overturned: 0, overturnPct: null, changedPct: null };
 
   const v1 = [];
   const v2 = [];
   const sens = [];
   const click = [];
   const fid = [];
+  const slamRows = [];
 
   for (const r of rows) {
     if (r.slam?.matched) slamFlagged++;
@@ -58,7 +88,6 @@ export function summarizeRun({ rows, feeds }) {
         calls++;
       }
     }
-    // Failed calls still cost tokens sometimes (e.g. refusal) — count them.
     for (const e of [r.sweepError, r.fulltextError]) {
       if (e?.usage) {
         usage = addUsage(usage, e.usage);
@@ -81,48 +110,109 @@ export function summarizeRun({ rows, feeds }) {
     if (f.fidelity != null) fid.push(f.fidelity);
     v1.push(articleIntegrityV1(f, { thinBody: r.thinBody }));
     v2.push(articleIntegrityV2(f));
+    slamRows.push({ outlet: r.outlet || r.publication, flagged: !!r.slam?.matched, value: f.sens });
 
     if (r.escalation?.eligible) {
       esc.eligible++;
       const sv = r.escalation.sweepVerdict;
-      const bucket = esc.bySweep[sv];
+      if (r.escalation.reason && esc.byReason[r.escalation.reason] != null) esc.byReason[r.escalation.reason]++;
       if (r.fulltext || r.fulltextError) esc.attempted++;
       const outcome = r.escalation.outcome || 'pending';
-      esc[outcome]++;
-      if (bucket) bucket[outcome]++;
-      if (outcome === 'pending' && r.fulltextError) {
+      esc[outcome] = (esc[outcome] || 0) + 1;
+      if (esc.bySweep[sv]) esc.bySweep[sv][outcome]++;
+      if (esc.matrix[sv]) {
+        if (r.fulltext?.verdict && MODEL_VERDICTS.includes(r.fulltext.verdict)) esc.matrix[sv][r.fulltext.verdict]++;
+        else if (outcome === 'unresolved') esc.matrix[sv].unresolved++;
+        else esc.matrix[sv].pending++;
+      }
+      if ((outcome === 'pending' || outcome === 'unresolved') && r.fulltextError) {
         if (r.fulltextError.reason === 'blocked') esc.blocked++;
         else if (r.fulltextError.reason === 'timeout') esc.timeout++;
         else esc.error++;
       }
     }
+    if (r.audit) {
+      audit.present++;
+      if (r.auditOutcome?.scored) {
+        audit.scored++;
+        if (r.auditOutcome.changed) audit.changed++;
+        if (r.auditOutcome.overturned) audit.overturned++;
+      }
+    }
   }
+  audit.overturnPct = audit.scored ? round1((100 * audit.overturned) / audit.scored) : null;
+  audit.changedPct = audit.scored ? round1((100 * audit.changed) / audit.scored) : null;
 
-  const fi2 = framingIntegrityV2(rows);
+  const strict = fiBlock(rows, 'strict', runId);
+  const broad = fiBlock(rows, 'broad', runId);
+  const unresolved = framingIntegrity(rows, 'broad').unresolved;
   const fi1 = framingIntegrityV1(rows);
-  const bal = outletBalancedV2(rows);
   const cov = coverage(rows);
   const scoredRows = rows.length - unscored;
+  const slamTest = permutationWithinOutlet(slamRows, { seed: seedFrom(runId, 'slam') });
+
+  let goldenSummary = null;
+  if (golden) {
+    const c = golden.comparison || {};
+    goldenSummary = {
+      scored: c.scored ?? null,
+      n: c.n ?? null,
+      agreementPct: c.baseline?.agreementPct ?? null,
+      baselineRunId: c.baseline?.runId ?? null,
+      sameModel: c.baseline?.sameModel ?? null,
+      samePrompt: c.baseline?.samePrompt ?? null,
+      expectedAgreementPct: c.expected?.agreementPct ?? null,
+      fidelityDrift: c.baseline?.fidelityDrift ?? null,
+      sensDrift: c.baseline?.sensDrift ?? null,
+      clickDrift: c.baseline?.clickDrift ?? null,
+      changed: c.baseline?.changed?.length ?? null,
+      alert: !!c.alert,
+      alertBelowPct: c.alertBelowPct,
+      calls: golden.calls,
+      usage: golden.usage,
+      costUsd: costOf(golden.usage),
+    };
+    usage = addUsage(usage, golden.usage);
+    calls += golden.calls || 0;
+  }
+
+  const ext = extraction || { attempts: 0, successes: 0, byOutlet: {} };
+  const extractionSummary = {
+    attempts: ext.attempts,
+    successes: ext.successes,
+    successPct: ext.attempts ? round1((100 * ext.successes) / ext.attempts) : null,
+    byOutlet: Object.fromEntries(Object.entries(ext.byOutlet || {}).map(([o, v]) => [o, { ...v, successPct: v.attempts ? round1((100 * v.successes) / v.attempts) : null }])),
+  };
 
   return {
-    rows: { total: rows.length, scored: scoredRows, unscored, fulltext: fulltextRows, feedSummary: feedRows, headlineOnly: toneRows, withText: fi2.n },
+    rows: { total: rows.length, scored: scoredRows, unscored, fulltext: fulltextRows, feedSummary: feedRows, headlineOnly: toneRows, withText: broad.n + unresolved },
     feeds: feedCounts,
     verdicts,
     framingIntegrity: {
+      // Back-compatible fields (broad, as first published).
       v1: fi1.value,
-      v2Low: fi2.low,
-      v2High: fi2.high,
-      v2Point: fi2.point,
-      v2N: fi2.n,
-      provisionalPending: fi2.provisional,
-      outletBalanced: bal.value,
-      outletsRanked: bal.outlets,
+      v2Low: broad.low,
+      v2High: broad.high,
+      v2Point: broad.point,
+      v2N: broad.n,
+      provisionalPending: broad.provisional,
+      outletBalanced: broad.balanced.value,
+      outletsRanked: broad.balanced.qualified,
+      // Methodology v2, two definitions, never merged with each other or
+      // with the provisional-outcome range.
+      strict,
+      broad,
+      unresolved,
+      outletMinN: OUTLET_MIN_N,
     },
     coverage: cov.value,
     integrity: { meanV1: meanOf(v1), meanV2: meanOf(v2) },
     axes: { fidelity: meanOf(fid), sens: meanOf(sens), click: meanOf(click) },
-    slam: { flagged: slamFlagged, index: rows.length ? round1((100 * slamFlagged) / rows.length) : null },
+    slam: { flagged: slamFlagged, index: rows.length ? round1((100 * slamFlagged) / rows.length) : null, test: slamTest },
     escalation: esc,
+    audit,
+    extraction: extractionSummary,
+    golden: goldenSummary,
     usage: { ...usage, calls },
     costUsd: costOf(usage),
   };
@@ -132,6 +222,8 @@ export function summarizeRun({ rows, feeds }) {
 // the frozen column order).
 export function historyRecord(run) {
   const s = run.summary;
+  const m = s.escalation.matrix || {};
+  const cell = (sv, v) => m[sv]?.[v] ?? null;
   return {
     run_id: run.id,
     started_at: run.startedAt,
@@ -185,23 +277,76 @@ export function historyRecord(run) {
     tokens_cache_write: s.usage.cacheWrite,
     model_calls: s.usage.calls,
     cost_usd: s.costUsd,
-    // Reserved for phase 2 (DEFECTS.md v2-5 … v2-8). Empty until the outlet
-    // key, the full escalation matrix, and the audit sample exist.
-    fi_v2_outlets_qualified: null,
-    fi_v2_outlet_min_n: null,
-    esc_provisional_to_verified: null,
-    esc_provisional_to_contextual: null,
-    esc_provisional_to_contested: null,
-    esc_provisional_to_unverifiable: null,
-    esc_provisional_to_misleading: null,
-    esc_contested_to_verified: null,
-    esc_contested_to_contextual: null,
-    esc_contested_to_contested: null,
-    esc_contested_to_unverifiable: null,
-    esc_contested_to_misleading: null,
-    audit_sampled: null,
-    audit_scored: null,
-    audit_overturned: null,
-    audit_overturn_pct: null,
+    // Reserved in phase 1, filled from phase 2 on.
+    fi_v2_outlets_qualified: s.framingIntegrity.outletsRanked,
+    fi_v2_outlet_min_n: s.framingIntegrity.outletMinN ?? null,
+    esc_provisional_to_verified: cell('PROVISIONAL', 'VERIFIED'),
+    esc_provisional_to_contextual: cell('PROVISIONAL', 'CONTEXTUAL'),
+    esc_provisional_to_contested: cell('PROVISIONAL', 'CONTESTED'),
+    esc_provisional_to_unverifiable: cell('PROVISIONAL', 'UNVERIFIED'),
+    esc_provisional_to_misleading: cell('PROVISIONAL', 'MISLEADING'),
+    esc_contested_to_verified: cell('CONTESTED', 'VERIFIED'),
+    esc_contested_to_contextual: cell('CONTESTED', 'CONTEXTUAL'),
+    esc_contested_to_contested: cell('CONTESTED', 'CONTESTED'),
+    esc_contested_to_unverifiable: cell('CONTESTED', 'UNVERIFIED'),
+    esc_contested_to_misleading: cell('CONTESTED', 'MISLEADING'),
+    audit_sampled: s.audit?.sampledThisRun ?? null,
+    audit_scored: s.audit?.scored ?? null,
+    audit_overturned: s.audit?.overturned ?? null,
+    audit_overturn_pct: s.audit?.overturnPct ?? null,
+  };
+}
+
+// The stats.csv record: methodology v2 statistics per run, a companion to
+// history.csv keyed by run_id (see ledger.js STATS_COLUMNS).
+export function statsRecord(run) {
+  const s = run.summary;
+  const fi = s.framingIntegrity;
+  const m = s.escalation.matrix || {};
+  const cx = m.CONTEXTUAL || {};
+  const g = s.golden;
+  return {
+    run_id: run.id,
+    started_at: run.startedAt,
+    fi_strict_low: fi.strict?.low ?? null,
+    fi_strict_high: fi.strict?.high ?? null,
+    fi_strict_ci_low: fi.strict?.ci?.lo ?? null,
+    fi_strict_ci_high: fi.strict?.ci?.hi ?? null,
+    fi_broad_low: fi.broad?.low ?? null,
+    fi_broad_high: fi.broad?.high ?? null,
+    fi_broad_ci_low: fi.broad?.ci?.lo ?? null,
+    fi_broad_ci_high: fi.broad?.ci?.hi ?? null,
+    fi_strict_balanced: fi.strict?.balanced?.value ?? null,
+    fi_broad_balanced: fi.broad?.balanced?.value ?? null,
+    outlets_qualified: fi.broad?.balanced?.qualified ?? null,
+    outlet_min_n: fi.outletMinN ?? null,
+    fi_unresolved: fi.unresolved ?? null,
+    esc_reclassified: s.escalation.reclassified ?? null,
+    esc_unresolved: s.escalation.unresolved ?? null,
+    esc_contextual_eligible: s.escalation.byReason?.low_fidelity_contextual ?? null,
+    esc_contextual_to_verified: cx.VERIFIED ?? null,
+    esc_contextual_to_contextual: cx.CONTEXTUAL ?? null,
+    esc_contextual_to_contested: cx.CONTESTED ?? null,
+    esc_contextual_to_unverifiable: cx.UNVERIFIED ?? null,
+    esc_contextual_to_misleading: cx.MISLEADING ?? null,
+    audit_present: s.audit?.present ?? null,
+    audit_changed: s.audit?.changed ?? null,
+    extract_attempts: s.extraction?.attempts ?? null,
+    extract_successes: s.extraction?.successes ?? null,
+    extract_success_pct: s.extraction?.successPct ?? null,
+    slam_gap: s.slam.test?.observedDiff ?? null,
+    slam_gap_ci_low: s.slam.test?.ci?.lo ?? null,
+    slam_gap_ci_high: s.slam.test?.ci?.hi ?? null,
+    slam_p: s.slam.test?.p ?? null,
+    slam_n_flagged: s.slam.test?.nFlagged ?? null,
+    slam_n_rest: s.slam.test?.nRest ?? null,
+    golden_scored: g?.scored ?? null,
+    golden_agreement_pct: g?.agreementPct ?? null,
+    golden_expected_agreement_pct: g?.expectedAgreementPct ?? null,
+    golden_fidelity_drift: g?.fidelityDrift ?? null,
+    golden_sens_drift: g?.sensDrift ?? null,
+    golden_click_drift: g?.clickDrift ?? null,
+    golden_alert: g ? (g.alert ? 1 : 0) : null,
+    golden_cost_usd: g?.costUsd ?? null,
   };
 }

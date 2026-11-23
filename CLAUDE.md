@@ -55,7 +55,24 @@ fix is itself a defect.
 
 ## Phases
 
-1. Pipeline + ledger + tests (this repo's first PR).
-2. Math v2 statistics + golden set.
-3. Telemetry deck + headline table + article detail (the site).
-4. Cutover: domain, anthonycharts generator URL, archive old `signal/`.
+1. Pipeline + ledger + tests (merged).
+2. Math v2 statistics + golden set, plus the review additions (DEFECTS.md
+   v2-5 to v2-21), landing as a few merged PRs: pipeline math and ledger,
+   then the site panels and mobile tiers, then the human validation set.
+3. Telemetry deck + headline table + article detail (merged, ahead of 2).
+4. Cutover, only on the operator's say-so: domain, anthonycharts generator
+   URL, archive old `signal/`, Open Graph tags with a 1200×630 share image
+   titled "Signal — Media Integrity Scanner" so link previews render the
+   new deck.
+
+## Queued after phase 2
+
+- Tone map upgrade: dot size = count at each (sensationalism, clickbait)
+  point, colour = dominant verdict, tap to list headlines; a 30-day "TONE
+  TRAIL · 30D" of daily centroids fading with age with today's marker
+  (never called drift; drift is the golden-set panel's word); markers on
+  days the model string or prompt hash changed; a day scrubber; tapping an
+  outlet (or a watchlist star) overlays its own 30-day trail for outlets
+  with at least 20 rows in the window. The scan job precomputes
+  `data/daily.json` (overall and per-outlet centroids and counts) so the
+  site never loads raw scan files for this.

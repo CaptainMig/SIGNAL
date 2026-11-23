@@ -19,6 +19,8 @@ export const ALLOWED = {
   latest: { file: 'latest.json', type: 'application/json; charset=utf-8' },
   history: { file: 'history.csv', type: 'text/csv; charset=utf-8' },
   aggregate: { file: 'aggregate.json', type: 'application/json; charset=utf-8' },
+  stats: { file: 'stats.csv', type: 'text/csv; charset=utf-8' },
+  daily: { file: 'daily.json', type: 'application/json; charset=utf-8' },
 };
 
 export function repoCoordinates(env = process.env) {
