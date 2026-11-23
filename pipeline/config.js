@@ -50,7 +50,7 @@ export const MAX_ITEM_AGE_HOURS = 48;
 export const MIN_HEADLINE_CHARS = 15;
 
 // Full-text extraction (escalation).
-export const EXTRACT_TIMEOUT_MS = 20_000;
+export const EXTRACT_TIMEOUT_MS = 30_000; // raised from 20s: WaPo article fetches timed out in the first live run
 export const EXTRACT_CONCURRENCY = 2;
 export const EXTRACT_MIN_CHARS = 400; // below this the page is a stub (paywall / consent shell)
 export const EXTRACT_MAX_CHARS = 12_000;
@@ -98,7 +98,18 @@ export const FEEDS = [
   { name: 'CNBC', owner: 'Comcast / NBCUniversal', url: 'https://www.cnbc.com/id/100727362/device/rss/rss.html' },
   { name: 'The Hill', owner: 'Nexstar Media', url: 'https://thehill.com/feed/' },
   { name: 'Politico', owner: 'Axel Springer', url: 'https://rss.politico.com/politics-news.xml' },
-  { name: 'The Guardian', owner: 'Scott Trust', url: 'https://www.theguardian.com/world/rss' },
+  // theguardian.com answers 403 to the GitHub runner (first live run). The
+  // Open Platform's free developer key is for non-commercial use only; the
+  // commercial key (priced on request) covers "products derived from Guardian
+  // content", which is what Signal is. Until a commercial key exists, the
+  // Guardian is recovered through Google News and scored for tone only.
+  // DEFECTS.md v2-10.
+  {
+    name: 'The Guardian (via Google News)',
+    owner: 'Scott Trust',
+    url: 'https://news.google.com/rss/search?q=site:theguardian.com+when:1d&hl=en-US&gl=US&ceid=US:en',
+    thinBody: true,
+  },
   {
     name: 'WSJ (via Google News)',
     owner: 'News Corp',

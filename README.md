@@ -106,6 +106,14 @@ report: per-feed HTTP status, rows scored vs unscored by reason, tokens, cost,
 and one raw model response. The same report is attached as an artifact and
 appended to every hourly run's summary.
 
+Google News feeds are fetched one at a time with a short gap (Google
+rate-limits parallel requests) and a 429 is retried once after `Retry-After`.
+Google News titles have their trailing " - Publisher" removed before scoring
+and display. The Guardian is recovered through Google News and scored for tone
+only: its site refuses the runner and the Open Platform's free key is for
+non-commercial use, so fidelity scoring there would need a commercial key
+(`DEFECTS.md` v2-10).
+
 Feed health distinguishes `live`, `stale` (fetched, nothing fresh),
 `blocked` (the publisher answered 401/402/403/451 to the runner; listed, never
 dropped) and `dead` (any other failure). `feeds_blocked` is a column in

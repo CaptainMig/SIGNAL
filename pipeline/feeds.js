@@ -22,6 +22,46 @@ const MAX_ITEM_AGE_MS = MAX_ITEM_AGE_HOURS * 60 * 60 * 1000;
 export const BLOCKED_FEED_STATUSES = new Set([401, 402, 403, 451]);
 export const FEED_STATUSES = ['live', 'stale', 'blocked', 'dead'];
 
+// Hosts that rate-limit concurrent requests (Google News answered 429 to the
+// third of three parallel feeds in the first live run). Feeds on these hosts
+// are fetched one at a time with a gap; every other feed runs in parallel.
+export const SERIALIZED_HOSTS = new Set(['news.google.com']);
+export const SERIALIZED_GAP_MS = 1500;
+// A 429 is retried exactly once, after Retry-After (capped) or this default.
+export const RETRY_AFTER_DEFAULT_MS = 5000;
+export const RETRY_AFTER_MAX_MS = 30_000;
+
+const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function hostOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+// Google News titles end in " - Publisher" (the source name). That suffix is
+// not part of the headline: it reads as an extra claim or a tease to the
+// scorer and clutters display. Stripped from aggregator feeds only; a direct
+// feed's dash is left alone because it may be editorial.
+export function stripPublisherSuffix(title) {
+  const t = String(title || '');
+  const idx = t.lastIndexOf(' - ');
+  if (idx <= 0) return t;
+  const suffix = t.slice(idx + 3).trim();
+  if (!suffix || suffix.length > 60 || suffix.includes(' - ')) return t;
+  const head = t.slice(0, idx).trim();
+  return head.length >= MIN_HEADLINE_CHARS ? head : t;
+}
+
+function retryAfterMs(res) {
+  const h = res?.headers?.get?.('retry-after');
+  const secs = Number(h);
+  if (Number.isFinite(secs) && secs > 0) return Math.min(secs * 1000, RETRY_AFTER_MAX_MS);
+  return RETRY_AFTER_DEFAULT_MS;
+}
+
 /**
  * Freshness gate. 'fresh' = parseable date within MAX_ITEM_AGE_HOURS of now;
  * 'stale' = parseable but older; 'undated' = no parseable date (kept, tagged).
@@ -53,24 +93,34 @@ export function isMalformedTitle(title) {
  *   { status: 'empty', httpStatus, ms, reason }     — fetched, no usable items
  *   { status: 'error', httpStatus?, ms, reason }    — network / HTTP / not a feed
  */
-export async function fetchFeed(feed, { fetch = globalThis.fetch, timeoutMs = FEED_TIMEOUT_MS } = {}) {
+export async function fetchFeed(feed, { fetch = globalThis.fetch, timeoutMs = FEED_TIMEOUT_MS, sleep = defaultSleep } = {}) {
   const t0 = Date.now();
   let res;
-  try {
-    res = await fetch(feed.url, {
-      redirect: 'follow',
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
-      },
-    });
-  } catch (e) {
-    const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
-    return { status: 'error', reason: timeout ? 'timeout' : e?.message || 'network error', ms: Date.now() - t0 };
+  let retried = false;
+  for (;;) {
+    try {
+      res = await fetch(feed.url, {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: {
+          'User-Agent': USER_AGENT,
+          Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+        },
+      });
+    } catch (e) {
+      const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+      return { status: 'error', reason: timeout ? 'timeout' : e?.message || 'network error', ms: Date.now() - t0 };
+    }
+    // Rate limited: wait as told (or the default) and try exactly once more.
+    if (res.status === 429 && !retried) {
+      retried = true;
+      await sleep(retryAfterMs(res));
+      continue;
+    }
+    break;
   }
   const ms = Date.now() - t0;
-  if (!res.ok) return { status: 'error', httpStatus: res.status, reason: `HTTP ${res.status}`, ms };
+  if (!res.ok) return { status: 'error', httpStatus: res.status, reason: `HTTP ${res.status}${retried ? ' after retry' : ''}`, ms, retried };
   let xml;
   try {
     xml = await res.text();
@@ -79,8 +129,30 @@ export async function fetchFeed(feed, { fetch = globalThis.fetch, timeoutMs = FE
   }
   if (!looksLikeFeed(xml)) return { status: 'error', httpStatus: res.status, reason: 'not a feed', ms };
   const items = parseFeed(xml);
-  if (!items.length) return { status: 'empty', httpStatus: res.status, reason: 'no items', ms };
-  return { status: 'ok', items, httpStatus: res.status, ms };
+  if (!items.length) return { status: 'empty', httpStatus: res.status, reason: 'no items', ms, retried };
+  return { status: 'ok', items, httpStatus: res.status, ms, retried };
+}
+
+/**
+ * Fetch every feed: parallel across hosts, but feeds on a SERIALIZED_HOST are
+ * fetched one after another with a gap. Results are returned in feed order.
+ */
+export async function fetchAllFeeds(feeds, { fetch = globalThis.fetch, timeoutMs = FEED_TIMEOUT_MS, sleep = defaultSleep } = {}) {
+  const results = new Array(feeds.length);
+  const serial = [];
+  const parallel = [];
+  feeds.forEach((f, i) => (SERIALIZED_HOSTS.has(hostOf(f.url)) ? serial : parallel).push(i));
+  const one = async (i) => {
+    results[i] = { feed: feeds[i], ...(await fetchFeed(feeds[i], { fetch, timeoutMs, sleep })) };
+  };
+  const serialRun = (async () => {
+    for (let k = 0; k < serial.length; k++) {
+      if (k > 0) await sleep(SERIALIZED_GAP_MS);
+      await one(serial[k]);
+    }
+  })();
+  await Promise.all([serialRun, ...parallel.map(one)]);
+  return results;
 }
 
 /**
@@ -99,8 +171,9 @@ export async function collectHeadlines({
   now = Date.now(),
   perFeed = HEADLINES_PER_FEED,
   timeoutMs = FEED_TIMEOUT_MS,
+  sleep = defaultSleep,
 } = {}) {
-  const results = await Promise.all(feeds.map((f) => fetchFeed(f, { fetch, timeoutMs }).then((r) => ({ feed: f, ...r }))));
+  const results = await fetchAllFeeds(feeds, { fetch, timeoutMs, sleep });
 
   const rows = [];
   const seen = new Set();
@@ -114,6 +187,7 @@ export async function collectHeadlines({
       thinBody: !!r.feed.thinBody,
       httpStatus: r.httpStatus ?? null,
       ms: r.ms,
+      retried: !!r.retried,
       fetched: 0,
       kept: 0,
       stale: 0,
@@ -135,9 +209,11 @@ export async function collectHeadlines({
       continue;
     }
 
-    const stat = { ...base, fetched: r.items.length, reason: null };
+    const stat = { ...base, fetched: r.items.length, reason: r.retried ? 'recovered after 429 retry' : null };
     const candidates = [];
-    for (const item of r.items) {
+    const aggregator = SERIALIZED_HOSTS.has(hostOf(r.feed.url));
+    for (const raw of r.items) {
+      const item = aggregator ? { ...raw, title: stripPublisherSuffix(raw.title) } : raw;
       if (isMalformedTitle(item.title)) {
         stat.malformed++;
         continue;

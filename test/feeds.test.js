@@ -99,3 +99,97 @@ test('thin-body feeds get an empty summary; per-feed cap keeps the newest', asyn
   assert.equal(rows[9].canonical, 'https://many/9');
   assert.ok(rows.every((r) => r.summary === '' && r.thinBody));
 });
+
+test('stripPublisherSuffix removes a trailing " - Publisher" and nothing else', async () => {
+  const { stripPublisherSuffix } = await import('../pipeline/feeds.js');
+  assert.equal(stripPublisherSuffix('Tourists evacuated after hotel fire - AP News'), 'Tourists evacuated after hotel fire');
+  assert.equal(stripPublisherSuffix('Fed holds rates - markets rally - Reuters'), 'Fed holds rates - markets rally');
+  assert.equal(stripPublisherSuffix('No suffix here at all'), 'No suffix here at all');
+  assert.equal(stripPublisherSuffix('Short - The Washington Post'), 'Short - The Washington Post', 'never strips down to a malformed headline');
+  assert.equal(stripPublisherSuffix('Headline - ' + 'x'.repeat(80)), 'Headline - ' + 'x'.repeat(80), 'a long tail is not a publisher');
+});
+
+test('aggregator feeds get the publisher suffix stripped; direct feeds keep their dashes', async () => {
+  const gn = (title) =>
+    `<rss><channel><item><title>${title}</title><link>https://news.google.com/rss/articles/${encodeURIComponent(title)}?oc=5</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate></item></channel></rss>`;
+  const fetch = mockFetch({
+    'https://news.google.com/rss/search?q=site:x': { status: 200, body: gn('Senate passes budget bill - AP News') },
+    'https://direct/': { status: 200, body: gn('Senate passes budget bill - a tale of two chambers') },
+  });
+  const { rows } = await collectHeadlines({
+    feeds: [
+      { name: 'X (via Google News)', owner: 'X', url: 'https://news.google.com/rss/search?q=site:x', thinBody: true },
+      { name: 'Direct', owner: 'D', url: 'https://direct/' },
+    ],
+    fetch,
+    now: NOW,
+    sleep: async () => {},
+  });
+  assert.equal(rows[0].title, 'Senate passes budget bill');
+  assert.equal(rows[1].title, 'Senate passes budget bill - a tale of two chambers');
+});
+
+test('a 429 is retried exactly once after Retry-After; a second 429 is dead, a recovery is noted', async () => {
+  const waits = [];
+  const sleep = async (ms) => waits.push(ms);
+  let calls = 0;
+  const flaky = async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 429, headers: { get: (h) => (h === 'retry-after' ? '3' : null) }, text: async () => '' };
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => fixture('feed-a.xml') };
+  };
+  const r = await fetchFeed({ name: 'F', url: 'https://news.google.com/rss/x' }, { fetch: flaky, sleep });
+  assert.equal(r.status, 'ok');
+  assert.equal(r.retried, true);
+  assert.deepEqual(waits, [3000]);
+
+  let calls2 = 0;
+  const always429 = async () => {
+    calls2++;
+    return { ok: false, status: 429, headers: { get: () => null }, text: async () => '' };
+  };
+  const waits2 = [];
+  const d = await fetchFeed({ name: 'F', url: 'https://news.google.com/rss/x' }, { fetch: always429, sleep: async (ms) => waits2.push(ms) });
+  assert.equal(d.status, 'error');
+  assert.equal(d.reason, 'HTTP 429 after retry');
+  assert.equal(calls2, 2, 'exactly one retry');
+  assert.deepEqual(waits2, [5000], 'default wait when Retry-After is absent');
+
+  const { feeds } = await collectHeadlines({ feeds: [{ name: 'F', owner: 'O', url: 'https://news.google.com/rss/x' }], fetch: (() => { let n = 0; return async () => (++n === 1 ? { ok: false, status: 429, headers: { get: () => null }, text: async () => '' } : { ok: true, status: 200, headers: { get: () => null }, text: async () => fixture('feed-a.xml') }); })(), now: NOW, sleep: async () => {} });
+  assert.equal(feeds[0].status, 'live');
+  assert.equal(feeds[0].retried, true);
+  assert.equal(feeds[0].reason, 'recovered after 429 retry');
+});
+
+test('Google News feeds are fetched one at a time with a gap; other hosts run in parallel', async () => {
+  const { fetchAllFeeds, SERIALIZED_GAP_MS } = await import('../pipeline/feeds.js');
+  const order = [];
+  const waits = [];
+  let inFlightGn = 0;
+  let peakGn = 0;
+  const fetch = async (url) => {
+    order.push(url);
+    const gn = url.startsWith('https://news.google.com/');
+    if (gn) {
+      inFlightGn++;
+      peakGn = Math.max(peakGn, inFlightGn);
+    }
+    await new Promise((r) => setTimeout(r, 5));
+    if (gn) inFlightGn--;
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => fixture('feed-a.xml') };
+  };
+  const feeds = [
+    { name: 'G1', url: 'https://news.google.com/rss/search?q=1' },
+    { name: 'D1', url: 'https://d1/' },
+    { name: 'G2', url: 'https://news.google.com/rss/search?q=2' },
+    { name: 'D2', url: 'https://d2/' },
+    { name: 'G3', url: 'https://news.google.com/rss/search?q=3' },
+  ];
+  const results = await fetchAllFeeds(feeds, { fetch, sleep: async (ms) => waits.push(ms) });
+  assert.equal(peakGn, 1, 'never two Google News requests in flight');
+  assert.deepEqual(waits, [SERIALIZED_GAP_MS, SERIALIZED_GAP_MS]);
+  assert.deepEqual(results.map((r) => r.feed.name), ['G1', 'D1', 'G2', 'D2', 'G3'], 'results keep feed order');
+  assert.ok(results.every((r) => r.status === 'ok'));
+  // The direct feeds did not wait for the Google News chain.
+  assert.ok(order.indexOf('https://d1/') < order.indexOf('https://news.google.com/rss/search?q=2'));
+});
