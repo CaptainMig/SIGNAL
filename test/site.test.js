@@ -14,7 +14,8 @@ test('parseCsv handles quotes, doubled quotes, CRLF, numbers and empties', () =>
 });
 
 test('ledger access serves only the three allowed files', async () => {
-  assert.deepEqual(Object.keys(ALLOWED), ['latest', 'history', 'aggregate', 'stats', 'daily']);
+  assert.deepEqual(Object.keys(ALLOWED), ['latest', 'history', 'aggregate', 'stats', 'daily', 'validation-set', 'validation-agreement']);
+  assert.ok(!Object.values(ALLOWED).some((v) => /model-labels/.test(v.file)), 'the model labels are never served');
   const r = await readLedgerFile('../package', { env: { SIGNAL_DATA_LOCAL: '1' } });
   assert.deepEqual([r.ok, r.status], [false, 404]);
 });

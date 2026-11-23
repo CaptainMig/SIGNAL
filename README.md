@@ -108,6 +108,22 @@ spent. A headline edit, prompt edit, or model change forces a fresh score.
 - `node scripts/report-daily.js` reports runs, rows, tokens and cost per UTC
   day from `history.csv`.
 
+## Human validation
+
+`npm run validation:build` draws 100 headline + article pairs from the
+last 30 days of the ledger, stratified by the model's verdict (PROVISIONAL
+pools with MISLEADING), into `data/validation/set.json` (served; no scores)
+and `data/validation/model-labels-v<N>.json` (never served). A draw is
+frozen; a new draw is a new version. Reviewers label the set blind on the
+unlisted `/validate` page: they read the article at the publisher's link,
+pick a verdict (or "can't access"), score the three axes, and export
+`labels-<reviewer>-v<N>.json`, which is committed to
+`data/validation/labels/`. Every scan recomputes
+`data/validation/agreement.json`: Cohen's kappa overall and one-vs-rest per
+verdict, model vs each reviewer and reviewer vs reviewer, plus mean absolute
+axis differences. The method page states "Not yet validated against human
+reviewers." until two reviewers have completed the set.
+
 ## Numbers in `history.csv`
 
 - `fi_v2_low` / `fi_v2_high`: Framing Integrity v2 over rows with article

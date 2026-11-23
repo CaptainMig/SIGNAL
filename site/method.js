@@ -3,6 +3,29 @@
 // the code that scores.
 import { esc, panelHead, verdictColor, verdictLabel } from './ui.js';
 
+function kappaTable(meta, rows, { withAxes = false } = {}) {
+  const verdicts = meta.verdicts.model;
+  const head = verdicts.map((v) => `<th>${esc(verdictLabel(meta, v))}</th>`).join('');
+  const body = rows.map((r) => `<tr><td class="l"><div class="name">${esc(r.label)}</div></td><td>${r.n}</td><td>${r.overall.agreement == null ? '—' : r.overall.agreement + '%'}</td><td>${r.overall.kappa == null ? '—' : r.overall.kappa}</td>${verdicts.map((v) => `<td>${r.perVerdict?.[v] == null ? '—' : r.perVerdict[v]}</td>`).join('')}${withAxes ? `<td>${r.axes?.fidelity ?? '—'} / ${r.axes?.sens ?? '—'} / ${r.axes?.click ?? '—'}</td>` : ''}</tr>`).join('');
+  return `<div class="scrollbox"><table class="data" style="min-width:720px"><thead><tr><th class="l">PAIR</th><th>n</th><th>AGREE</th><th>κ OVERALL</th>${head}${withAxes ? '<th>MAD F / S / C</th>' : ''}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function validationSection(data) {
+  const v = data.validation;
+  const { meta } = data;
+  if (!v) {
+    return `<p class="gold">Not yet validated against human reviewers.</p><p>A blind labelling set of 100 headline + article pairs drawn from the ledger, stratified by model verdict, is drawn by the operator once the ledger has enough rows in every verdict. Reviewers label it on an unlisted page without seeing any score; labels are committed to the repository; agreement (Cohen's kappa, overall and per verdict) is reported here once at least two reviewers have finished.</p>`;
+  }
+  const status = v.validated ? `<p class="accent">${esc(v.statement)}</p>` : `<p class="gold">${esc(v.statement)}</p>`;
+  const reviewers = v.reviewers.length ? `<p class="muted" style="font-size:13px">Set v${esc(String(v.version))} · ${v.size} pairs · reviewers: ${v.reviewers.map((r) => `${esc(r.reviewer)} (${r.labelled}/${v.size}${r.unavailable ? `, ${r.unavailable} unreachable` : ''}${r.complete ? ', complete' : ''})`).join(', ')} · ${v.complete} of ${v.minReviewers} required complete.</p>` : `<p class="muted" style="font-size:13px">Set v${esc(String(v.version))} · ${v.size} pairs · no reviewer labels committed yet.</p>`;
+  const mvh = v.modelVsHuman.filter((m) => m.n > 0);
+  const hvh = v.humanVsHuman.filter((h) => h.n > 0);
+  return `${status}${reviewers}
+    ${mvh.length ? `<p class="mono muted" style="font-size:11px;letter-spacing:.1em">MODEL VS HUMAN · COHEN'S κ (OVERALL AND ONE-VS-REST PER VERDICT) · MEAN ABSOLUTE AXIS DIFFERENCE</p>${kappaTable(meta, mvh.map((m) => ({ label: `model vs ${m.reviewer}`, n: m.n, overall: m.overall, perVerdict: m.perVerdict, axes: m.axes })), { withAxes: true })}` : ''}
+    ${hvh.length ? `<p class="mono muted" style="font-size:11px;letter-spacing:.1em">HUMAN VS HUMAN</p>${kappaTable(meta, hvh.map((h) => ({ label: `${h.a} vs ${h.b}`, n: h.n, overall: h.overall, perVerdict: h.perVerdict })))}` : ''}
+    <p class="muted" style="font-size:13px">Reviewers judge the headline against the article at the publisher's link; the model judged it against the feed summary or the extracted text, so the evidence is not identical. Items a reviewer could not access are excluded from the comparisons.</p>`;
+}
+
 export function renderMethod(data) {
   const { meta } = data;
   const defs = meta.verdicts.display.concat(['UNSCORED']).map((v) => `<div class="def"><span class="sw" style="background:${verdictColor(meta, v) || '#8d939e'}"></span><div><div class="mono" style="font-size:11px;letter-spacing:.08em;color:${verdictColor(meta, v)}">${esc(verdictLabel(meta, v))}</div><div class="muted" style="font-size:14px">${esc(meta.verdicts.definitions[v] || '')}</div></div></div>`).join('');
@@ -32,8 +55,7 @@ export function renderMethod(data) {
       <h2>UNCERTAINTY AND CHECKS</h2>
       <p>Wilson intervals for single-outlet rates. Scorecards over a rolling 7 days are ranked only at n ≥ 20 rows with text and at least 3 observation days, and are shrunk toward the pooled rate (beta-binomial, 20 pseudo-rows); below the threshold the row shows its progress. The slam gap is tested by permutation within outlet, p = (count + 1)/(iterations + 1), and labelled a consistency check. A frozen 50-headline golden set is scored on a cadence to detect scorer drift against a baseline that is written once. A seeded audit sample of sweep VERIFIED and CONTEXTUAL rows is checked against full text to measure what the sweep misses. Escalation outcomes keep the full sweep × full-text matrix; "cleared" means the full text returned VERIFIED or CONTEXTUAL, nothing else. A row whose article cannot be fetched after four attempts is UNRESOLVED and counted beside the numbers, not inside them.</p>
       <h2>HUMAN VALIDATION</h2>
-      <p class="gold">Not yet validated against human reviewers.</p>
-      <p>A blind labelling set of 100 headline + article pairs drawn from the ledger, stratified by model verdict, is being prepared. Agreement with reviewers (Cohen's kappa, per verdict) will be reported here once at least two reviewers have completed it.</p>
+      ${validationSection(data)}
       <h2>THE SLAM FLAG</h2>
       <p>A deterministic lexicon match, not an AI score. Core verbs: ${meta.slam.core.map(esc).join(', ')}. Watch verbs (often literal, muted badge): ${meta.slam.watch.map(esc).join(', ')}. Literal uses such as "car slams into" and "fire guts building" are suppressed. It never changes a verdict.</p>
       <h2>FEEDS</h2>

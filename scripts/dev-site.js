@@ -35,7 +35,7 @@ http
       return h(req, res);
     }
     let p = url.pathname;
-    if (p === '/' || /^\/(headlines|outlets|method|article\/[^/]+)$/.test(p)) p = '/index.html';
+    if (p === '/' || /^\/(headlines|outlets|method|validate|article\/[^/]+)$/.test(p)) p = '/index.html';
     const file = path.join(SITE, p);
     if (!file.startsWith(SITE)) return res.writeHead(403).end();
     try {
