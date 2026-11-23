@@ -86,8 +86,8 @@ main > * { min-width: 0; }
 details.section { border: 0.5px solid var(--hair); padding: 0; }
 details.section > summary { list-style: none; cursor: pointer; padding: 16px 20px; }
 details.section > summary::-webkit-details-marker { display: none; }
-details.section > summary::before { content: '+'; display: inline-block; width: 14px; color: var(--muted); }
-details.section[open] > summary::before { content: '−'; }
+details.section > summary > span:first-child::before { content: '+'; display: inline-block; width: 14px; color: var(--muted); }
+details.section[open] > summary > span:first-child::before { content: '−'; }
 details.section .section-body { display: flex; flex-direction: column; gap: 14px; padding: 0 20px 20px; }
 @media (min-width: 640px) { details.section > summary { padding: 18px 24px; } details.section .section-body { padding: 0 24px 24px; } }
 
