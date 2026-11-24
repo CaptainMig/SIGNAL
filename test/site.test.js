@@ -155,7 +155,7 @@ test('the current view is assembled from pointer.json, the latest scan and the s
   const again = await buildLatestView({ env, fetch, pack: 'regional' });
   assert.match(again.source, /instance cache/);
   const missing = await buildLatestView({ env, fetch: async () => ({ ok: false, status: 404 }), pack: 'national' });
-  assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'no run recorded yet']);
+  assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'no run recorded yet (data/pointer.json: upstream HTTP 404)']);
   assert.deepEqual((await buildLatestView({ env, fetch, pack: 'nope' })).status, 404);
 });
 
