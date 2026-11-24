@@ -4,16 +4,19 @@
 // writes the ledger. Never runs in a browser; the API key is read from the
 // environment here and nowhere else.
 //
-//   node scripts/scan.js [--dry-run] [--limit N] [--root DIR] [--report FILE]
+//   node scripts/scan.js [--dry-run] [--force] [--limit N] [--root DIR] [--report FILE]
 //
 // --dry-run  fetches and dedupes feeds, writes a run with every row UNSCORED
 //            (reason dry_run), and spends no tokens.
+// --force    run even if the previous run started less than
+//            SCAN_MIN_GAP_MINUTES ago (otherwise the run is skipped: the
+//            external trigger and GitHub's cron can both fire in one hour).
 // --report   also writes a Markdown run report (per-feed HTTP status, rows
 //            scored vs unscored by reason, tokens, cost, one raw model
 //            response) — the Actions job appends it to the step summary.
 // ---------------------------------------------------------------------------
 import { promises as fs } from 'node:fs';
-import { runScan, REUSE_WINDOW_HOURS } from '../pipeline/run.js';
+import { runScan, REUSE_WINDOW_HOURS, tooSoon } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
 import { createRemoteFetch } from '../pipeline/extract.js';
 import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
@@ -23,7 +26,7 @@ import { historyRecord, statsRecord } from '../pipeline/summarize.js';
 import { computeAggregate, WINDOW_HOURS } from '../pipeline/aggregate.js';
 import { readBaseline, readGoldenSet, writeBaselineIfAbsent } from '../pipeline/golden.js';
 import { buildScorecards } from '../pipeline/scorecards.js';
-import { GOLDEN_EVERY_N_RUNS, SCORECARD_WINDOW_DAYS } from '../pipeline/config.js';
+import { GOLDEN_EVERY_N_RUNS, SCAN_MIN_GAP_MINUTES, SCORECARD_WINDOW_DAYS } from '../pipeline/config.js';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -33,6 +36,7 @@ function arg(name, fallback) {
 }
 
 const dryRun = process.argv.includes('--dry-run');
+const force = process.argv.includes('--force');
 const limit = Number(arg('--limit', 0)) || 0;
 const root = String(arg('--root', '.'));
 const reportPath = arg('--report', null);
@@ -140,6 +144,12 @@ async function main() {
   // Scan files are deltas; resolve carried references against the window and
   // the previous full view before carry-forward, scorecards and aggregation.
   const previousLatest = await readLatest({ root });
+  if (!force && tooSoon(previousLatest, now, SCAN_MIN_GAP_MINUTES * 60_000)) {
+    const msg = `[signal] skipped: previous run ${previousLatest.id} started ${Math.round((now - Date.parse(previousLatest.startedAt)) / 60_000)} min ago (< ${SCAN_MIN_GAP_MINUTES}); nothing scored, nothing written. Pass --force to run anyway.`;
+    log(msg);
+    if (reportPath) await fs.writeFile(String(reportPath), `# Signal scan skipped\n\n${msg.replace('[signal] ', '')}\n`);
+    return;
+  }
   const window = resolveRuns(await readRecentScans({ root, now, windowMs }), { latest: previousLatest });
   const priorRuns = window.filter((r) => Date.parse(r.startedAt) >= now - reuseMs);
 

@@ -53,6 +53,10 @@ export const MIN_HEADLINE_CHARS = 15;
 // read by the workflow comment, the site's NEXT RUN chip (via /api/meta) and
 // the run report. Changing it re-registers the schedule with GitHub.
 export const SCAN_MINUTE_UTC = 11;
+// A run that starts less than this long after the previous run started is
+// skipped (nothing scored, nothing written) unless forced: the external
+// trigger and GitHub's own cron can both fire in the same hour.
+export const SCAN_MIN_GAP_MINUTES = 40;
 
 // Full-text extraction (escalation).
 // Default per-attempt timeout; a feed can override it with `extractTimeoutMs`
