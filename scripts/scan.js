@@ -18,7 +18,6 @@
 import { promises as fs } from 'node:fs';
 import { runScan, REUSE_WINDOW_HOURS, tooSoon } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
-import { createRemoteFetch } from '../pipeline/extract.js';
 import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
 import { updateDaily } from '../pipeline/daily.js';
 import { refreshAgreement } from '../pipeline/validation.js';
@@ -104,7 +103,7 @@ export function renderReport({ run, rows, scorer, paths }) {
   L.push(`Audit: ${s.audit.sampledThisRun} sampled this run · ${s.audit.present} present · ${s.audit.scored} scored · ${s.audit.overturned} overturned (${s.audit.overturnPct ?? '—'}%) · ${s.audit.changed} changed`);
   const ex = s.extraction;
   const bag = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '—';
-  L.push(`Extraction: ${ex.successes}/${ex.attempts} fetched (${ex.successPct ?? '—'}%) · ${ex.skipped?.video ?? 0} video page(s) skipped · routes: ${bag(ex.routes)} · failures: ${bag(ex.reasons)} · remote route ${ex.remote || 'not configured'}`);
+  L.push(`Extraction: ${ex.successes}/${ex.attempts} fetched (${ex.successPct ?? '—'}%) · ${ex.skipped?.video ?? 0} video page(s) skipped · ${ex.skipped?.robots ?? 0} disallowed by robots.txt · failures: ${bag(ex.reasons)}`);
   L.push('');
   L.push('| Outlet | Fetched / attempts | % | Failures | Routes |');
   L.push('|---|---|---|---|---|');
@@ -183,12 +182,7 @@ async function main() {
     }
   }
 
-  // The Vercel-side fetch route, when the deployment is configured for it
-  // (SIGNAL_FETCH_URL + SIGNAL_FETCH_TOKEN). Absent, the runner is the only
-  // route and the run says so.
-  const remoteFetch = createRemoteFetch({ url: process.env.SIGNAL_FETCH_URL, token: process.env.SIGNAL_FETCH_TOKEN });
-  log(`[signal] remote fetch route: ${remoteFetch ? 'configured' : 'not configured'}`);
-  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex, remoteFetch });
+  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex });
 
   const paths = [];
   paths.push(await writeScan(run, delta, { root }));
@@ -213,8 +207,12 @@ async function main() {
     if (!summary) continue;
     const packRuns = allRuns.map((r) => packView(r, key));
     const packRows = rows.filter((r) => packOf(r) === key);
-    const scorecards = buildScorecards(packRuns.filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3));
-    paths.push(await writeLatest({ ...run, pack: key, summary, scorecards }, packRows, { root, pack: key }));
+    const windowRuns = packRuns.filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3);
+    const scorecards = buildScorecards(windowRuns);
+    // Per-metro figures for packs with metros, gated like outlets (n ≥ 20
+    // text rows over ≥ 3 days); the pack-level numbers are the aggregate.
+    const metros = pack.metros?.length ? buildScorecards(windowRuns, { groupBy: 'metro' }) : undefined;
+    paths.push(await writeLatest({ ...run, pack: key, summary, scorecards, ...(metros ? { metros } : {}) }, packRows, { root, pack: key }));
     const recent = packRuns.filter((r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000);
     paths.push(await writeAggregate(computeAggregate(recent, { now: after }), { root, pack: key }));
     paths.push(await writeDaily(updateDaily(await readDaily({ root, pack: key }), packRuns.filter((r) => Date.parse(r.startedAt) >= after - reuseMs), { now: after }), { root, pack: key }));

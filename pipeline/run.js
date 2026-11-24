@@ -23,6 +23,7 @@ import { DEFAULT_PACK, EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, EXTRACT_TIMEOU
 import { collectHeadlines } from './feeds.js';
 import { detectSlam } from './slam.js';
 import { fetchArticle, isVideoUrl } from './extract.js';
+import { createRobotsChecker } from './robots.js';
 import { bylineOf } from './bylines.js';
 import { auditResult, auditSampleSize, escalationOutcome, escalationReason, pickAuditRows } from './escalate.js';
 import { summarizeRun } from './summarize.js';
@@ -77,15 +78,6 @@ function reusable(entry, row, hashes, model) {
   return out;
 }
 
-// The Vercel-side route is worth a try when the runner's address was refused
-// or answered nothing; never for a server-truncated paywall teaser (the same
-// page from another address) or a video page (nothing to fetch).
-export function remoteWorthTrying(result) {
-  if (!result || result.ok) return false;
-  if (result.reason === 'no_article') return false;
-  if (result.reason === 'blocked' && result.detail === 'paywall') return false;
-  return true;
-}
 
 function scoreRecord(result, mode, extra = {}) {
   return {
@@ -162,7 +154,7 @@ export async function runScan({
   extractConcurrency = EXTRACT_CONCURRENCY,
   model = MODEL,
   maxAttempts = EXTRACT_MAX_ATTEMPTS,
-  remoteFetch = null, // createRemoteFetch(...) — the Vercel-side route, or null when not configured
+  robots = null, // createRobotsChecker(...); built from `fetch` when absent
   golden = null, // { set, baseline, every } — scored when runIndex % every === 0
   runIndex = 0,
   auditSize = null, // override the audit sample size (tests); null = schedule
@@ -260,7 +252,8 @@ export async function runScan({
   }
   const flagged = rows.filter((r) => r.escalation.eligible);
   const wantsText = rows.filter((r) => r.escalation.eligible || r.audit);
-  const newExtraction = () => ({ attempts: 0, successes: 0, byOutlet: {}, reasons: {}, routes: {}, skipped: { video: 0 }, remote: remoteFetch ? 'configured' : 'not configured' });
+  const newExtraction = () => ({ attempts: 0, successes: 0, byOutlet: {}, reasons: {}, routes: {}, skipped: { video: 0, robots: 0 } });
+  const robotsChecker = robots || createRobotsChecker({ fetch });
   // Extraction telemetry is kept per pack (an aggregate, never blended).
   const extractionByPack = {};
   const extractionFor = (row) => (extractionByPack[packOf(row)] ||= newExtraction());
@@ -276,7 +269,7 @@ export async function runScan({
   // Retry policy: a failed fetch is retried on later runs until maxAttempts
   // total, then the row is UNRESOLVED (DEFECTS.md v2-15). A video page and a
   // paywall teaser are final at once: nothing about them changes hourly.
-  const finalNow = (e) => e && (e.reason === 'no_article' || (e.reason === 'blocked' && e.detail === 'paywall'));
+  const finalNow = (e) => e && (e.reason === 'no_article' || (e.reason === 'blocked' && (e.detail === 'paywall' || /^robots\.txt/.test(e.detail || ''))));
   const toEscalate = dryRun ? [] : wantsText.filter((r) => !r.fulltext && !finalNow(r.fulltextError) && (r.fulltextError?.attempts || 0) < maxAttempts);
   const videoSkipped = Object.values(extractionByPack).reduce((a, e) => a + e.skipped.video, 0);
   if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} row(s) to full text (${auditSampled} audit${videoSkipped ? `, ${videoSkipped} video page(s) skipped` : ''})`);
@@ -289,17 +282,21 @@ export async function runScan({
     extraction.attempts++;
     const o = (extraction.byOutlet[row.outlet] ||= { attempts: 0, successes: 0, reasons: {}, routes: {} });
     o.attempts++;
-    let ex = await fetchArticle(row.link, { fetch, timeoutMs: timeoutFor(row) });
-    let tried = ex.tried || [];
-    if (!ex.ok && remoteFetch && remoteWorthTrying(ex)) {
-      const remote = await remoteFetch(row.link, { timeoutMs: timeoutFor(row) });
-      tried = [...tried, 'vercel'];
-      // The remote answer replaces the runner's unless it is a plain error
-      // (the route itself failed) and the runner's reason says more.
-      if (remote.ok || remote.reason !== 'error' || ex.reason === 'error') ex = { ...remote, attempts: (ex.attempts || 0) + (remote.attempts || 1) };
+    // robots.txt first: a publisher that disallows Signal, or refuses to
+    // serve its robots.txt, is SOURCE BLOCKED without a fetch.
+    const rb = await robotsChecker.check(row.link);
+    let ex;
+    let tried;
+    if (rb.allowed) {
+      ex = await fetchArticle(row.link, { fetch, timeoutMs: timeoutFor(row) });
+      tried = ['robots', ...(ex.tried || [])];
+    } else {
+      ex = { ok: false, reason: rb.reason, detail: rb.detail, attempts: 0, ms: 0 };
+      tried = ['robots'];
+      if (rb.reason === 'blocked') extraction.skipped.robots++;
     }
     if (!ex.ok) {
-      const key = ex.detail && ex.detail !== ex.reason && /^(HTTP \d+|paywall|stub|consent wall|video page)$/.test(ex.detail) ? `${ex.reason}:${ex.detail}` : ex.reason;
+      const key = ex.detail && ex.detail !== ex.reason && /^(HTTP \d+|paywall|stub|consent wall|video page|robots\.txt disallows|robots\.txt refused \(HTTP \d+\))$/.test(ex.detail) ? `${ex.reason}:${ex.detail}` : ex.reason;
       count(extraction.reasons, key);
       count(o.reasons, key);
       row.fulltextError = { reason: ex.reason, detail: ex.detail, stage: 'extract', chars: ex.chars ?? null, attempts: finalNow(ex) ? maxAttempts : priorAttempts + 1, at: new Date(now()).toISOString() };

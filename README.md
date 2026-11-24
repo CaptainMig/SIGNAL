@@ -11,6 +11,18 @@ Link previews use `site/og.png` (1200×630, "Signal — Media Integrity
 Scanner"), rendered from `scripts/og/template.html` with
 `node scripts/og/render.js`; the PNG is never hand-edited.
 
+## Fetch policy
+
+Every fetch, feeds and articles alike, is made once with one honest user
+agent that names Signal and carries a contact URL
+(`Mozilla/5.0 (compatible; Signal/2; +https://anthony-signal.vercel.app/method)`).
+Before an article is fetched its publisher's `robots.txt` is read and
+honoured (`pipeline/robots.js`: the `Signal` group, else `*`; longest match,
+Allow wins a tie). There are no browser identities, no retries under another
+name, no consent-cookie workarounds and no second network route. A publisher
+that disallows Signal, refuses the fetch or its `robots.txt`, or serves a
+paywall teaser or a consent wall is SOURCE BLOCKED and scored headline-only.
+
 ## Feed packs
 
 Every feed belongs to exactly one pack (`pack` in `pipeline/config.js`).
@@ -24,9 +36,14 @@ shared (rows carry `pack` and `metro`).
 | Pack | Feeds | Files |
 |---|---|---|
 | `national` | the 24 national and international feeds | `data/history.csv`, `stats.csv`, `latest.json`, `aggregate.json`, `daily.json` |
-| `regional-business` | 18 feeds across Washington DC, Baltimore, New York and Kansas City | `data/packs/regional-business/…` |
+| `regional` | 18 feeds across Washington DC, Baltimore, New York and Kansas City, each tagged business or general | `data/packs/regional/…` |
 
-### Regional business pack: coverage review (2026-11-24)
+Every feed is tagged with a `scope`, `business` or `general` (national
+business feeds: CNBC, Fortune, Financial Times, WSJ). Pack-level numbers are
+the aggregate; a metro shows its own figures only once it has 20 text rows
+over 3 days (`latest.metros`, gated like outlet scorecards).
+
+### Regional pack: coverage review (2026-11-24)
 
 Each candidate's `robots.txt` and terms were read before it was added.
 A feed is **headline-only** (tone mode, the article is never fetched) when the
@@ -34,7 +51,10 @@ publisher names AI agents in `robots.txt`, restricts its RSS feed to personal
 non-commercial use, bars automated access in its terms, or refuses the fetch.
 Generic anti-scraping boilerplate without an RSS clause (TEGNA, Scripps,
 Paramount) is treated as it is for the national pack's CBS, NBC and Fox
-feeds; the operator can flip any feed to headline-only with `thinBody: true`.
+feeds (operator decision 2026-11-24: WUSA9, WMAR, KSHB and the CBS locals
+stay full text); the operator can flip any feed to headline-only with
+`thinBody: true`. At fetch time every publisher's `robots.txt` is honoured
+regardless of this table.
 
 | Metro | Feed | Coverage | robots.txt | Terms |
 |---|---|---|---|---|

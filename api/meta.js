@@ -17,7 +17,7 @@ const META = {
   verdicts: { model: MODEL_VERDICTS, display: DISPLAY_VERDICTS, integrity: INTEGRITY_VERDICTS, labels: VERDICT_LABELS, colors: VERDICT_COLORS, definitions: VERDICT_DEFINITIONS },
   packs: PACKS,
   defaultPack: DEFAULT_PACK,
-  feeds: FEEDS.map((f) => ({ name: f.name, outlet: f.outlet || f.name, owner: f.owner, thinBody: !!f.thinBody, host: safeHost(f.url), pack: f.pack || DEFAULT_PACK, metro: f.metro || null, coverage: f.coverage || (f.thinBody ? 'headline-only' : 'full-text'), coverageReason: f.coverageReason || null })),
+  feeds: FEEDS.map((f) => ({ name: f.name, outlet: f.outlet || f.name, owner: f.owner, thinBody: !!f.thinBody, host: safeHost(f.url), pack: f.pack || DEFAULT_PACK, metro: f.metro || null, scope: f.scope || 'general', coverage: f.coverage || (f.thinBody ? 'headline-only' : 'full-text'), coverageReason: f.coverageReason || null })),
   slam: { core: CORE, watch: WATCH },
 };
 

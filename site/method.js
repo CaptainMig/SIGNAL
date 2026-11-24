@@ -29,7 +29,7 @@ function validationSection(data) {
 export function renderMethod(data) {
   const { meta, latest } = data;
   const defs = meta.verdicts.display.concat(['UNSCORED']).map((v) => `<div class="def"><span class="sw" style="background:${verdictColor(meta, v) || '#8d939e'}"></span><div><div class="mono" style="font-size:11px;letter-spacing:.08em;color:${verdictColor(meta, v)}">${esc(verdictLabel(meta, v))}</div><div class="muted" style="font-size:14px">${esc(meta.verdicts.definitions[v] || '')}</div></div></div>`).join('');
-  const feeds = meta.feeds.map((f) => `<tr><td class="l"><div class="name">${esc(f.name)}</div><div class="sub">${esc(f.owner)}</div></td><td class="l mono muted">${esc(f.host)}</td><td class="l">${f.thinBody ? '<span class="muted">HEADLINE ONLY · TONE</span>' : 'FEED SUMMARY · ESCALATES TO FULL TEXT'}</td></tr>`).join('');
+  const feeds = meta.feeds.map((f) => `<tr><td class="l"><div class="name">${esc(f.name)}</div><div class="sub">${esc(f.owner)}${f.metro ? ` · ${esc(f.metro)}` : ''}</div></td><td class="l mono muted">${esc(f.pack || 'national')}</td><td class="l mono muted">${esc(String(f.scope || 'general').toUpperCase())}</td><td class="l mono muted">${esc(f.host)}</td><td class="l">${f.thinBody ? '<span class="muted">HEADLINE ONLY · TONE</span>' : 'FEED SUMMARY · ESCALATES TO FULL TEXT'}</td></tr>`).join('');
   return `<section class="panel full">
     ${panelHead('METHOD · V2')}
     <div class="prose">
@@ -44,7 +44,7 @@ export function renderMethod(data) {
       <ul>
         <li>Headline-only scoring can never emit MISLEADING. A sweep MISLEADING is held as PROVISIONAL until the full text confirms or clears it.</li>
         <li>UNVERIFIED is displayed as UNVERIFIABLE: the claim could not be verified from what the article gives.</li>
-        <li>When the article cannot be fetched, the row says why: SOURCE BLOCKED (the publisher refuses automated retrieval, or serves a server-truncated paywall teaser, a consent wall, or a stub), TIMEOUT (transient, retried on later runs), or NO ARTICLE TEXT (a video page, never fetched). Each fetch tries a chain of routes before giving up: the runner with a full browser header set, a second browser identity, the publisher's own consent acceptance where one exists, the publisher's text rendering where one exists, and a second network route when configured. The route that succeeded is recorded on the row and the success rate by outlet is published in run health.</li>
+        <li>When the article cannot be fetched, the row says why: SOURCE BLOCKED (the publisher refuses automated retrieval, or serves a server-truncated paywall teaser, a consent wall, or a stub), TIMEOUT (transient, retried on later runs), or NO ARTICLE TEXT (a video page, never fetched). Fetch policy: every fetch, feeds and articles alike, is made once with one honest user agent that names Signal and carries a contact URL, after the publisher's robots.txt has been read and honoured. There are no browser identities, no retries under another name, no consent-cookie workarounds and no second network route. A publisher that disallows Signal in robots.txt, refuses the fetch, or serves a paywall teaser or a consent wall is SOURCE BLOCKED and its rows are scored headline-only. The success rate by outlet is published in run health.</li>
         <li>A failed scoring call is UNSCORED and excluded from every number. A default is never presented as a score.</li>
       </ul>
       <h2>FRAMING INTEGRITY</h2>
@@ -63,7 +63,7 @@ export function renderMethod(data) {
       <h2>BYLINES</h2>
       ${bylineSection(latest)}
       <h2>FEEDS</h2>
-      <div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">FEED</th><th class="l">HOST</th><th class="l">EVIDENCE</th></tr></thead><tbody>${feeds}</tbody></table></div>
+      <div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">FEED</th><th class="l">PACK</th><th class="l">SCOPE</th><th class="l">HOST</th><th class="l">COVERAGE</th></tr></thead><tbody>${feeds}</tbody></table></div>
       <h2>WHAT SIGNAL IS NOT</h2>
       <ul>
         <li>Not a fact-checker. VERIFIED ≠ confirmed true.</li>
@@ -84,12 +84,12 @@ export function packsSection(meta) {
   const blocks = packs.map((p) => {
     const own = feeds.filter((f) => (f.pack || 'national') === p.key);
     const metros = p.metros?.length ? `<div class="note">METROS · ${esc(p.metros.join(' · '))}</div>` : '';
-    const rows = p.key === 'national' ? '' : `<div class="scrollbox"><table class="data" style="min-width:640px"><thead><tr><th class="l">METRO</th><th class="l">FEED</th><th class="l">COVERAGE</th><th class="l">WHY</th></tr></thead><tbody>${own
-      .map((f) => `<tr><td class="l muted">${esc(f.metro || '')}</td><td class="l">${esc(f.name)}</td><td class="l">${esc(String(f.coverage || (f.thinBody ? 'headline-only' : 'full-text')).toUpperCase())}</td><td class="l muted">${esc(f.coverageReason || '')}</td></tr>`)
+    const rows = p.key === 'national' ? '' : `<div class="scrollbox"><table class="data" style="min-width:640px"><thead><tr><th class="l">METRO</th><th class="l">FEED</th><th class="l">SCOPE</th><th class="l">COVERAGE</th><th class="l">WHY</th></tr></thead><tbody>${own
+      .map((f) => `<tr><td class="l muted">${esc(f.metro || '')}</td><td class="l">${esc(f.name)}</td><td class="l muted">${esc(String(f.scope || 'general').toUpperCase())}</td><td class="l">${esc(String(f.coverage || (f.thinBody ? 'headline-only' : 'full-text')).toUpperCase())}</td><td class="l muted">${esc(f.coverageReason || '')}</td></tr>`)
       .join('')}</tbody></table></div>`;
     return `<p><b>${esc(p.label)}</b> · ${own.length} feed${own.length === 1 ? '' : 's'}. ${esc(p.description || '')}</p>${metros}${rows}`;
   });
-  return `<p>Every feed belongs to exactly one pack. Every number on this site is computed from one pack at a time: its own rows, its own history, its own outlets, its own tone map. Nothing is blended across packs. Headline-only feeds are scored for tone only (sensationalism and clickbait), never for fidelity or a verdict, because the publisher's robots.txt or feed terms rule out fetching the article.</p>${blocks.join('')}`;
+  return `<p>Every feed belongs to exactly one pack. Every number on this site is computed from one pack at a time: its own rows, its own history, its own outlets, its own tone map. Nothing is blended across packs. Every feed is also tagged by scope, business or general. Pack-level numbers are the aggregate; a metro shows its own figures only once it has 20 text rows over 3 days. Headline-only feeds are scored for tone only (sensationalism and clickbait), never for fidelity or a verdict, because the publisher's robots.txt or feed terms rule out fetching the article.</p>${blocks.join('')}`;
 }
 
 // Byline coverage by outlet, from the latest run's summary. Coverage only:

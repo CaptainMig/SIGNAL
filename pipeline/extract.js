@@ -2,45 +2,37 @@
 // Article text extraction for full-text escalation.
 //
 // Deliberately light — no headless browser, no readability dependency. The
-// text is sent to the scorer and DISCARDED; the ledger stores only its length
-// and the route that produced it.
+// text is sent to the scorer and DISCARDED; the ledger stores only its length.
 //
-// Where the text comes from, in order of preference: the paragraph text of
-// the largest <article> / <main> container on the page (the FIRST container
-// is often a teaser card — DEFECTS.md v2-33), or the publisher's own
-// JSON-LD `articleBody` when it is longer.
+// Fetch policy (operator decision, DEFECTS.md v2-40): ONE fetch, with ONE
+// honest user agent that names Signal and carries a contact URL (config
+// USER_AGENT), after robots.txt has been honoured (robots.js). No browser
+// identities, no retries under another name, no consent-cookie workarounds,
+// no second network route. A publisher that refuses (401/402/403/451), or
+// serves a paywall teaser, a consent wall or a stub, is SOURCE BLOCKED and
+// the row is scored headline-only.
 //
-// How the page is fetched: a chain of identities and routes, each tried only
-// when the previous one failed for a reason the next could fix.
-//   1. the runner, full Chrome client-hint headers (the bare Chrome user agent
-//      is tarpitted by the Washington Post — DEFECTS.md v2-34)
-//   2. the runner, a Firefox identity (the "different user agent" retry)
-//   3. the runner, with a consent cookie, when a consent wall was served
-//   4. the publisher's own text / AMP rendering, where one exists
-// A Vercel-side route (api/fetch-article.js) is a fifth step, driven from
-// run.js, for publishers that refuse the GitHub runner's address.
+// Where the text comes from: the paragraph text of the largest <article> /
+// <main> container on the page (the FIRST container is often a teaser card
+// — DEFECTS.md v2-33), or the publisher's own JSON-LD `articleBody` when it
+// is longer. Video pages are known from the URL and never fetched (v2-35).
 //
 // Failure reasons are a closed set so the UI can say exactly why a row could
 // not earn a full-text verdict:
-//   blocked    — the publisher refuses automated retrieval (401/402/403/451),
-//                serves a server-truncated paywall teaser, a consent wall, or
-//                a stub. A property of the SOURCE: "UNVERIFIABLE — SOURCE
-//                BLOCKED", never a judgment on the outlet or the story.
-//   timeout    — the origin did not answer in time. A later attempt may succeed.
+//   blocked    — the publisher refuses automated retrieval (HTTP 401/402/403/
+//                451, or robots.txt), or serves a server-truncated paywall
+//                teaser, a consent wall, or a stub. A property of the SOURCE:
+//                "UNVERIFIABLE — SOURCE BLOCKED", never a judgment on the
+//                outlet or the story.
+//   timeout    — the origin did not answer in time. A later run tries again.
 //   no_article — a video page with no article text. Nothing to retry.
 //   error      — any other HTTP / network failure.
 // ---------------------------------------------------------------------------
-import { EXTRACT_IDENTITIES, EXTRACT_MAX_CHARS, EXTRACT_MIN_CHARS, EXTRACT_TIMEOUT_MS } from './config.js';
+import { EXTRACT_MAX_CHARS, EXTRACT_MIN_CHARS, EXTRACT_TIMEOUT_MS, USER_AGENT } from './config.js';
 
 export const BLOCKED_STATUSES = new Set([401, 402, 403, 451]);
 export const FAILURE_REASONS = ['blocked', 'timeout', 'error', 'no_article'];
-export const ROUTES = ['runner', 'alt-identity', 'consent-cookie', 'alternate', 'vercel'];
-
-// Consent cookies a publisher sets itself when a visitor accepts its choice
-// page; sent only after that page was served.
-export const CONSENT_COOKIES = {
-  'npr.org': () => `trackingChoice=true; choiceVersion=1; dateOfChoice=${Date.now()}`,
-};
+export const ROUTES = ['runner'];
 
 function decodeEntities(s) {
   return String(s || '')
@@ -65,8 +57,8 @@ function paragraphs(container) {
     .join('\n\n');
 }
 
-// JSON-LD on the page: article bodies, the types present, and whether the
-// publisher marks the article as not free (a paywall signal).
+// JSON-LD on the page: article bodies, authors, the types present, and
+// whether the publisher marks the article as not free (a paywall signal).
 export function readJsonLd(html) {
   const out = { bodies: [], types: new Set(), accessibleForFree: null, authors: [] };
   const names = (a) => {
@@ -109,7 +101,7 @@ export function readJsonLd(html) {
 }
 
 /**
- * HTML -> readable text. Returns { text, title, source, video, paywalled }.
+ * HTML -> readable text. Returns { text, title, source, video, paywalled, authors }.
  *   source    'markup' | 'ld+json' — where the winning text came from
  *   video     a video page (VideoObject, no article body) — nothing to retry
  *   paywalled the publisher marks the article as not free
@@ -157,27 +149,6 @@ export function isVideoUrl(url) {
   }
 }
 
-// Host-specific alternate URLs: a text or AMP rendering the publisher offers.
-export function alternateUrl(url) {
-  let u;
-  try {
-    u = new URL(url);
-  } catch {
-    return null;
-  }
-  const host = u.hostname.replace(/^www\./, '');
-  if (host === 'washingtonpost.com') {
-    if (u.searchParams.get('outputType') === 'amp') return null;
-    u.searchParams.set('outputType', 'amp');
-    return u.toString();
-  }
-  if (host === 'npr.org') {
-    const m = u.pathname.match(/\/(nx-s\d+-\d+|g-s\d+-\d+|\d{6,})(?=[/?#]|$)/);
-    return m ? `https://text.npr.org/${m[1]}` : null;
-  }
-  return null;
-}
-
 export function registrableHost(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
@@ -189,7 +160,8 @@ export function registrableHost(url) {
 }
 
 // A consent wall: the response landed on a consent / choice host, or the
-// page is a short "before you continue" shell.
+// page is a short "before you continue" shell. Classified, never worked
+// around: it is the publisher's answer.
 export function looksLikeConsentWall({ finalUrl = '', title = '', chars = 0 } = {}) {
   let host = '';
   let pathname = '';
@@ -204,27 +176,6 @@ export function looksLikeConsentWall({ finalUrl = '', title = '', chars = 0 } = 
   return chars < EXTRACT_MIN_CHARS && /before you continue|your privacy choices|we value your privacy|consent|accept (all )?cookies|cookie (settings|preferences)/i.test(title);
 }
 
-async function fetchOnce(url, { fetch, timeoutMs, headers }) {
-  const t0 = Date.now();
-  let res;
-  try {
-    res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(timeoutMs), headers });
-  } catch (e) {
-    const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
-    return { error: timeout ? 'timeout' : 'error', detail: timeout ? 'timeout' : e?.message || 'network error', ms: Date.now() - t0 };
-  }
-  let html = '';
-  let readError = null;
-  if (res.status >= 200 && res.status < 300) {
-    try {
-      html = await res.text();
-    } catch (e) {
-      readError = e?.message || 'read error';
-    }
-  }
-  return { status: res.status, finalUrl: res.url || url, html, readError, ms: Date.now() - t0 };
-}
-
 function classify(r, minChars) {
   if (r.error) return { ok: false, reason: r.error, detail: r.detail };
   if (BLOCKED_STATUSES.has(r.status)) return { ok: false, reason: 'blocked', detail: `HTTP ${r.status}`, httpStatus: r.status };
@@ -233,105 +184,41 @@ function classify(r, minChars) {
   const ex = extractText(r.html);
   if (ex.text.length >= minChars) return { ok: true, text: ex.text, chars: ex.text.length, title: ex.title, httpStatus: r.status, source: ex.source, authors: ex.authors };
   if (ex.video) return { ok: false, reason: 'no_article', detail: 'video page', chars: ex.text.length, httpStatus: r.status };
-  if (looksLikeConsentWall({ finalUrl: r.finalUrl, title: ex.title, chars: ex.text.length })) return { ok: false, reason: 'blocked', detail: 'consent wall', chars: ex.text.length, httpStatus: r.status, consent: true };
+  if (looksLikeConsentWall({ finalUrl: r.finalUrl, title: ex.title, chars: ex.text.length })) return { ok: false, reason: 'blocked', detail: 'consent wall', chars: ex.text.length, httpStatus: r.status };
   // Stub — paywall teaser / shell. Honest failure, never a fragment.
   return { ok: false, reason: 'blocked', detail: ex.paywalled ? 'paywall' : 'stub', chars: ex.text.length, httpStatus: r.status };
 }
 
-// The most informative failure across attempts: a video page is final; a
-// publisher refusal beats a timeout; a timeout beats a generic error.
-const RANK = { no_article: 4, blocked: 3, timeout: 2, error: 1 };
-function worst(results) {
-  return results.reduce((a, b) => (!a || RANK[b.reason] > RANK[a.reason] ? b : a), null);
-}
-
 /**
- * Fetch an article and extract its text through the identity / route chain.
- * Never throws.
- *   { ok: true, text, chars, title, httpStatus, source, route, attempts, ms }
- *   { ok: false, reason, detail, chars?, httpStatus?, route: null, attempts, ms, tried: [routes] }
+ * Fetch an article once, as Signal, and extract its text. Never throws.
+ *   { ok: true, text, chars, title, httpStatus, source, authors, route: 'runner', attempts: 1, ms, tried }
+ *   { ok: false, reason, detail, chars?, httpStatus?, route: null, attempts: 1, ms, tried: ['runner'] }
  */
-export async function fetchArticle(
-  url,
-  { fetch = globalThis.fetch, timeoutMs = EXTRACT_TIMEOUT_MS, minChars = EXTRACT_MIN_CHARS, identities = EXTRACT_IDENTITIES, alternate = alternateUrl, consentCookies = CONSENT_COOKIES } = {}
-) {
+export async function fetchArticle(url, { fetch = globalThis.fetch, timeoutMs = EXTRACT_TIMEOUT_MS, minChars = EXTRACT_MIN_CHARS, userAgent = USER_AGENT } = {}) {
   const t0 = Date.now();
   if (!/^https?:\/\//i.test(String(url || ''))) {
     return { ok: false, reason: 'error', detail: 'invalid url', route: null, attempts: 0, ms: 0, tried: [] };
   }
-  const results = [];
-  const tried = [];
-  const attempt = async (route, target, identity, extraHeaders = {}) => {
-    tried.push(route);
-    const r = await fetchOnce(target, { fetch, timeoutMs, headers: { ...identity.headers, ...extraHeaders } });
-    const c = classify(r, minChars);
-    results.push(c);
-    if (c.ok) return { ...c, route, attempts: results.length, ms: Date.now() - t0, tried: tried.slice() };
-    return null;
-  };
-  const [primary, secondary] = identities;
-
-  // 1. The runner, primary identity.
-  let hit = await attempt('runner', url, primary);
-  if (hit) return hit;
-  let last = results[results.length - 1];
-  // A video page is final; nothing else about it will change.
-  if (last.reason === 'no_article') return { ...last, route: null, attempts: results.length, ms: Date.now() - t0, tried };
-
-  // 2. A different identity, for refusals, tarpits and stubs alike.
-  if (secondary) {
-    hit = await attempt('alt-identity', url, secondary);
-    if (hit) return hit;
-    last = results[results.length - 1];
-    if (last.reason === 'no_article') return { ...last, route: null, attempts: results.length, ms: Date.now() - t0, tried };
+  let res;
+  try {
+    res = await fetch(url, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { 'User-Agent': userAgent, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' },
+    });
+  } catch (e) {
+    const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    return { ok: false, reason: timeout ? 'timeout' : 'error', detail: timeout ? 'timeout' : e?.message || 'network error', route: null, attempts: 1, ms: Date.now() - t0, tried: ['runner'] };
   }
-
-  // 3. A consent wall was served and the publisher's own accept cookie is known.
-  if (results.some((r) => r.consent)) {
-    const cookie = consentCookies[registrableHost(url)];
-    if (cookie) {
-      hit = await attempt('consent-cookie', url, secondary || primary, { Cookie: typeof cookie === 'function' ? cookie() : cookie });
-      if (hit) return hit;
-    }
-  }
-
-  // 4. The publisher's own text / AMP rendering.
-  const alt = alternate ? alternate(url) : null;
-  if (alt) {
-    hit = await attempt('alternate', alt, secondary || primary);
-    if (hit) return hit;
-  }
-
-  const w = worst(results);
-  return { ...w, route: null, attempts: results.length, ms: Date.now() - t0, tried };
-}
-
-/**
- * The Vercel-side route: POST the URL to api/fetch-article.js, which runs the
- * same chain from Vercel's network. Returns the same result shape with
- * route 'vercel'. Never throws; a misconfigured or unreachable route is an
- * error result, never a crash of the run.
- */
-export function createRemoteFetch({ url, token, fetch = globalThis.fetch, timeoutMs = 30_000 } = {}) {
-  if (!url || !token) return null;
-  return async (articleUrl, { timeoutMs: perFetch = EXTRACT_TIMEOUT_MS } = {}) => {
-    const t0 = Date.now();
+  const r = { status: res.status, finalUrl: res.url || url, html: '', readError: null };
+  if (res.status >= 200 && res.status < 300) {
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-signal-fetch-token': token },
-        body: JSON.stringify({ url: articleUrl, timeoutMs: perFetch }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!res.ok) return { ok: false, reason: 'error', detail: `remote route HTTP ${res.status}`, route: 'vercel', attempts: 0, ms: Date.now() - t0 };
-      const body = await res.json();
-      if (body && body.ok && typeof body.text === 'string' && body.text.length >= EXTRACT_MIN_CHARS) {
-        return { ok: true, text: body.text, chars: body.text.length, title: body.title || '', httpStatus: body.httpStatus ?? null, source: body.source || 'markup', authors: Array.isArray(body.authors) ? body.authors.filter((a) => typeof a === 'string').slice(0, 10) : [], route: 'vercel', attempts: body.attempts || 1, ms: Date.now() - t0 };
-      }
-      return { ok: false, reason: FAILURE_REASONS.includes(body?.reason) ? body.reason : 'error', detail: body?.detail || 'remote route returned nothing', chars: body?.chars ?? null, httpStatus: body?.httpStatus ?? null, route: 'vercel', attempts: body?.attempts || 1, ms: Date.now() - t0 };
+      r.html = await res.text();
     } catch (e) {
-      const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
-      return { ok: false, reason: timeout ? 'timeout' : 'error', detail: timeout ? 'remote route timeout' : `remote route: ${e?.message || 'error'}`, route: 'vercel', attempts: 0, ms: Date.now() - t0 };
+      r.readError = e?.message || 'read error';
     }
-  };
+  }
+  const c = classify(r, minChars);
+  const ms = Date.now() - t0;
+  return c.ok ? { ...c, route: 'runner', attempts: 1, ms, tried: ['runner'] } : { ...c, route: null, attempts: 1, ms, tried: ['runner'] };
 }

@@ -25,63 +25,16 @@ const timeoutMs = Number(arg('--timeout', 20_000)) || 20_000;
 const reportPath = arg('--report', null);
 const root = String(arg('--root', '.'));
 
-const CHROME_HEADERS = {
+const SIGNAL_HEADERS = {
   'User-Agent': USER_AGENT,
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9',
 };
-const CHROME_FULL = {
-  ...CHROME_HEADERS,
-  'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"Windows"',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Sec-Fetch-User': '?1',
-  'Upgrade-Insecure-Requests': '1',
-  'Cache-Control': 'max-age=0',
-};
-const FIREFOX = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
-};
-const HONEST = {
-  'User-Agent': 'Mozilla/5.0 (compatible; SignalScan/2; +https://github.com/CaptainMig/SIGNAL)',
-  Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-};
 
-// Host-specific alternate URLs: a text or AMP rendering the publisher offers.
-export function alternateUrl(url) {
-  let u;
-  try {
-    u = new URL(url);
-  } catch {
-    return null;
-  }
-  const host = u.hostname.replace(/^www\./, '');
-  if (host === 'washingtonpost.com') {
-    u.searchParams.set('outputType', 'amp');
-    return u.toString();
-  }
-  if (host === 'npr.org') {
-    const m = u.pathname.match(/\/(nx-s\d+-\d+|g-s\d+-\d+|\d{6,})\b/);
-    return m ? `https://text.npr.org/${m[1]}` : null;
-  }
-  if (host === 'cbsnews.com' || host === 'nbcnews.com' || host === 'abcnews.go.com') {
-    return u.pathname.includes('/video/') ? null : `${u.origin}${u.pathname.replace(/\/$/, '')}/amp/`;
-  }
-  return null;
-}
-
-const STRATEGIES = [
-  { key: 'chrome', headers: CHROME_HEADERS },
-  { key: 'chrome-full', headers: CHROME_FULL },
-  { key: 'firefox', headers: FIREFOX },
-  { key: 'honest-bot', headers: HONEST },
-  { key: 'alternate', headers: CHROME_HEADERS, url: alternateUrl },
-];
+// One strategy: the honest Signal identity, exactly as the scan fetches
+// (operator fetch policy, DEFECTS.md v2-40). The probe reports what the
+// publisher serves it; nothing is tried under another name.
+const STRATEGIES = [{ key: 'signal', headers: SIGNAL_HEADERS }];
 
 async function attempt(url, strategy) {
   const target = strategy.url ? strategy.url(url) : url;
@@ -152,8 +105,8 @@ export async function main() {
   L.push('');
   L.push('## By outlet: first strategy that extracts');
   L.push('');
-  L.push('| Outlet | Probed | Prior failure | chrome | chrome-full | firefox | honest-bot | alternate | Any |');
-  L.push('|---|---|---|---|---|---|---|---|---|');
+  L.push(`| Outlet | Probed | Prior failure | ${STRATEGIES.map((x) => x.key).join(' | ')} | Any |`);
+  L.push(`|---|---|---|${STRATEGIES.map(() => '---|').join('')}---|`);
   for (const [outlet, rows] of byOutlet) {
     const rs = results.filter((r) => r.outlet === outlet);
     const okCount = (key) => rs.filter((r) => r.attempts.find((a) => a.key === key)?.ok).length;
