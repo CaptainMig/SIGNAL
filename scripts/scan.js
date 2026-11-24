@@ -18,7 +18,6 @@
 import { promises as fs } from 'node:fs';
 import { runScan, REUSE_WINDOW_HOURS, tooSoon } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
-import { createRemoteFetch } from '../pipeline/extract.js';
 import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
 import { updateDaily } from '../pipeline/daily.js';
 import { refreshAgreement } from '../pipeline/validation.js';
@@ -26,7 +25,13 @@ import { historyRecord, statsRecord } from '../pipeline/summarize.js';
 import { computeAggregate, WINDOW_HOURS } from '../pipeline/aggregate.js';
 import { readBaseline, readGoldenSet, writeBaselineIfAbsent } from '../pipeline/golden.js';
 import { buildScorecards } from '../pipeline/scorecards.js';
-import { GOLDEN_EVERY_N_RUNS, SCAN_MIN_GAP_MINUTES, SCORECARD_WINDOW_DAYS } from '../pipeline/config.js';
+import { DEFAULT_PACK, GOLDEN_EVERY_N_RUNS, PACKS, SCAN_MIN_GAP_MINUTES, SCORECARD_WINDOW_DAYS, packOf } from '../pipeline/config.js';
+
+// A run (or a window of runs) narrowed to one pack's rows. Every derived
+// file is written from this; nothing is blended across packs.
+export function packView(run, key) {
+  return { ...run, rows: (run.rows || []).filter((r) => packOf(r) === key) };
+}
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -59,15 +64,28 @@ export function renderReport({ run, rows, scorer, paths }) {
   L.push('');
   L.push(`${s.feeds.live}/${s.feeds.total} live · ${s.feeds.stale} stale · ${s.feeds.blocked} blocked · ${s.feeds.dead} dead`);
   L.push('');
-  L.push('| Feed | Status | HTTP | Fetched | Kept | Stale | Malformed | Dupes | ms | Reason |');
-  L.push('|---|---|---|---|---|---|---|---|---|---|');
+  L.push('| Feed | Pack | Status | HTTP | Fetched | Kept | Stale | Malformed | Dupes | ms | Reason |');
+  L.push('|---|---|---|---|---|---|---|---|---|---|---|');
   for (const f of run.feeds) {
-    L.push(`| ${f.name} | ${f.status} | ${f.httpStatus ?? '—'} | ${f.fetched} | ${f.kept} | ${f.stale} | ${f.malformed} | ${f.dupes} | ${f.ms} | ${f.reason || ''} |`);
+    L.push(`| ${f.name} | ${f.pack || DEFAULT_PACK} | ${f.status} | ${f.httpStatus ?? '—'} | ${f.fetched} | ${f.kept} | ${f.stale} | ${f.malformed} | ${f.dupes} | ${f.ms} | ${f.reason || ''} |`);
   }
   const blocked = run.feeds.filter((f) => f.status === 'blocked');
   if (blocked.length) {
     L.push('');
     L.push(`**Blocked feeds (publisher refused the runner):** ${blocked.map((f) => `${f.name} (${f.reason})`).join(', ')}. Not dropped: listed in run health.`);
+  }
+  L.push('');
+  if (run.packs && Object.keys(run.packs).length > 1) {
+    L.push('');
+    L.push('## Packs');
+    L.push('');
+    L.push('| Pack | Feeds live | Rows | Scored | Full text | Headline only | FI broad |');
+    L.push('|---|---|---|---|---|---|---|');
+    for (const [key, ps] of Object.entries(run.packs)) {
+      L.push(`| ${key} | ${ps.feeds.live}/${ps.feeds.total} | ${ps.rows.total} | ${ps.rows.scored} | ${ps.rows.fulltext} | ${ps.rows.headlineOnly} | ${fmtRange(ps.framingIntegrity.broad?.low, ps.framingIntegrity.broad?.high)}% |`);
+    }
+    L.push('');
+    L.push(`The sections below are the ${DEFAULT_PACK} pack.`);
   }
   L.push('');
   L.push('## Rows');
@@ -85,7 +103,7 @@ export function renderReport({ run, rows, scorer, paths }) {
   L.push(`Audit: ${s.audit.sampledThisRun} sampled this run · ${s.audit.present} present · ${s.audit.scored} scored · ${s.audit.overturned} overturned (${s.audit.overturnPct ?? '—'}%) · ${s.audit.changed} changed`);
   const ex = s.extraction;
   const bag = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '—';
-  L.push(`Extraction: ${ex.successes}/${ex.attempts} fetched (${ex.successPct ?? '—'}%) · ${ex.skipped?.video ?? 0} video page(s) skipped · routes: ${bag(ex.routes)} · failures: ${bag(ex.reasons)} · remote route ${ex.remote || 'not configured'}`);
+  L.push(`Extraction: ${ex.successes}/${ex.attempts} fetched (${ex.successPct ?? '—'}%) · ${ex.skipped?.video ?? 0} video page(s) skipped · ${ex.skipped?.robots ?? 0} disallowed by robots.txt · failures: ${bag(ex.reasons)}`);
   L.push('');
   L.push('| Outlet | Fetched / attempts | % | Failures | Routes |');
   L.push('|---|---|---|---|---|');
@@ -164,17 +182,16 @@ async function main() {
     }
   }
 
-  // The Vercel-side fetch route, when the deployment is configured for it
-  // (SIGNAL_FETCH_URL + SIGNAL_FETCH_TOKEN). Absent, the runner is the only
-  // route and the run says so.
-  const remoteFetch = createRemoteFetch({ url: process.env.SIGNAL_FETCH_URL, token: process.env.SIGNAL_FETCH_TOKEN });
-  log(`[signal] remote fetch route: ${remoteFetch ? 'configured' : 'not configured'}`);
-  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex, remoteFetch });
+  const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex });
 
   const paths = [];
   paths.push(await writeScan(run, delta, { root }));
-  paths.push(await appendHistory(historyRecord(run), { root }));
-  paths.push(await appendStats(statsRecord(run), { root }));
+  for (const pack of PACKS) {
+    const summary = run.packs?.[pack.key];
+    if (!summary) continue;
+    paths.push(await appendHistory(historyRecord(run, summary), { root, pack: pack.key }));
+    paths.push(await appendStats(statsRecord(run, summary), { root, pack: pack.key }));
+  }
   if (goldenReport && !golden?.baseline) {
     const written = await writeBaselineIfAbsent({ runId: run.id, writtenAt: run.finishedAt, version: goldenReport.version, model: goldenReport.model, promptHash: goldenReport.promptHash, results: goldenReport.results }, { root });
     if (written) log('[signal] golden baseline written (first scoring run)');
@@ -182,13 +199,24 @@ async function main() {
 
   const after = Date.now();
   const allRuns = resolveRuns(await readRecentScans({ root, now: after, windowMs }), { latest: { rows } });
-  const scorecards = buildScorecards(allRuns.filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3));
-  paths.push(await writeLatest({ ...run, scorecards }, rows, { root }));
-  const recent = allRuns.filter((r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000);
-  paths.push(await writeAggregate(computeAggregate(recent, { now: after }), { root }));
-  // Daily tone summary for the site's tone trail: recompute the days the
-  // reuse window covers, keep older days as recorded.
-  paths.push(await writeDaily(updateDaily(await readDaily({ root }), allRuns.filter((r) => Date.parse(r.startedAt) >= after - reuseMs), { now: after }), { root }));
+  // Per pack: scorecards, the full current view, the 24h aggregate and the
+  // daily tone summary, each from that pack's rows only.
+  for (const pack of PACKS) {
+    const key = pack.key;
+    const summary = run.packs?.[key];
+    if (!summary) continue;
+    const packRuns = allRuns.map((r) => packView(r, key));
+    const packRows = rows.filter((r) => packOf(r) === key);
+    const windowRuns = packRuns.filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3);
+    const scorecards = buildScorecards(windowRuns);
+    // Per-metro figures for packs with metros, gated like outlets (n ≥ 20
+    // text rows over ≥ 3 days); the pack-level numbers are the aggregate.
+    const metros = pack.metros?.length ? buildScorecards(windowRuns, { groupBy: 'metro' }) : undefined;
+    paths.push(await writeLatest({ ...run, pack: key, summary, scorecards, ...(metros ? { metros } : {}) }, packRows, { root, pack: key }));
+    const recent = packRuns.filter((r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000);
+    paths.push(await writeAggregate(computeAggregate(recent, { now: after }), { root, pack: key }));
+    paths.push(await writeDaily(updateDaily(await readDaily({ root, pack: key }), packRuns.filter((r) => Date.parse(r.startedAt) >= after - reuseMs), { now: after }), { root, pack: key }));
+  }
   // Human validation agreement, from any labels files committed since.
   const agreement = await refreshAgreement({ root });
   if (agreement) log(`[signal] validation: ${agreement.statement} (${agreement.complete} complete of ${agreement.minReviewers})`);

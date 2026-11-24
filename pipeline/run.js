@@ -19,10 +19,11 @@
 // whose scan file holds its full record (`writtenIn`). latest.json is always
 // the full current view.
 // ---------------------------------------------------------------------------
-import { EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, EXTRACT_TIMEOUT_MS, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS, GOLDEN_EVERY_N_RUNS } from './config.js';
+import { DEFAULT_PACK, EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, EXTRACT_TIMEOUT_MS, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS, GOLDEN_EVERY_N_RUNS, PACKS, packOf } from './config.js';
 import { collectHeadlines } from './feeds.js';
 import { detectSlam } from './slam.js';
 import { fetchArticle, isVideoUrl } from './extract.js';
+import { createRobotsChecker } from './robots.js';
 import { bylineOf } from './bylines.js';
 import { auditResult, auditSampleSize, escalationOutcome, escalationReason, pickAuditRows } from './escalate.js';
 import { summarizeRun } from './summarize.js';
@@ -77,15 +78,6 @@ function reusable(entry, row, hashes, model) {
   return out;
 }
 
-// The Vercel-side route is worth a try when the runner's address was refused
-// or answered nothing; never for a server-truncated paywall teaser (the same
-// page from another address) or a video page (nothing to fetch).
-export function remoteWorthTrying(result) {
-  if (!result || result.ok) return false;
-  if (result.reason === 'no_article') return false;
-  if (result.reason === 'blocked' && result.detail === 'paywall') return false;
-  return true;
-}
 
 function scoreRecord(result, mode, extra = {}) {
   return {
@@ -162,7 +154,7 @@ export async function runScan({
   extractConcurrency = EXTRACT_CONCURRENCY,
   model = MODEL,
   maxAttempts = EXTRACT_MAX_ATTEMPTS,
-  remoteFetch = null, // createRemoteFetch(...) — the Vercel-side route, or null when not configured
+  robots = null, // createRobotsChecker(...); built from `fetch` when absent
   golden = null, // { set, baseline, every } — scored when runIndex % every === 0
   runIndex = 0,
   auditSize = null, // override the audit sample size (tests); null = schedule
@@ -174,20 +166,28 @@ export async function runScan({
 
   log(`[signal] run ${runIdFor(startedAt)} started (${dryRun ? 'dry run' : model})`);
   const collected = await collectHeadlines({ feeds, fetch, now: startedMs });
-  let rows = collected.rows.map(({ authors, ...r }) => ({
-    ...r,
-    slam: detectSlam(r.title),
-    // Byline from the feed; the article page's structured data fills it in
-    // when the article is fetched and the feed gave none.
-    byline: bylineOf({ outlet: feeds.find((f) => f.name === r.publication)?.outlet || r.publication, names: authors || [], source: 'feed' }),
-    sweep: null,
-    sweepError: null,
-    fulltext: null,
-    fulltextError: null,
-    outlet: feeds.find((f) => f.name === r.publication)?.outlet || r.publication,
-    escalation: { eligible: false, reason: null, sweepVerdict: null, outcome: null, unresolved: false, attempts: 0 },
-    final: null,
-  }));
+  const feedByName = new Map(feeds.map((f) => [f.name, f]));
+  let rows = collected.rows.map(({ authors, ...r }) => {
+    const feed = feedByName.get(r.publication);
+    const outlet = feed?.outlet || r.publication;
+    return {
+      ...r,
+      slam: detectSlam(r.title),
+      // Byline from the feed; the article page's structured data fills it in
+      // when the article is fetched and the feed gave none.
+      byline: bylineOf({ outlet, names: authors || [], source: 'feed' }),
+      sweep: null,
+      sweepError: null,
+      fulltext: null,
+      fulltextError: null,
+      outlet,
+      // Every row belongs to exactly one pack; nothing is blended across packs.
+      pack: packOf(feed),
+      metro: feed?.metro || null,
+      escalation: { eligible: false, reason: null, sweepVerdict: null, outcome: null, unresolved: false, attempts: 0 },
+      final: null,
+    };
+  });
   if (limit > 0) rows = rows.slice(0, limit);
   const live = collected.feeds.filter((f) => f.status === 'live').length;
   log(`[signal] feeds: ${live}/${collected.feeds.length} live · ${rows.length} rows after dedupe`);
@@ -252,41 +252,51 @@ export async function runScan({
   }
   const flagged = rows.filter((r) => r.escalation.eligible);
   const wantsText = rows.filter((r) => r.escalation.eligible || r.audit);
-  const extraction = { attempts: 0, successes: 0, byOutlet: {}, reasons: {}, routes: {}, skipped: { video: 0 }, remote: remoteFetch ? 'configured' : 'not configured' };
+  const newExtraction = () => ({ attempts: 0, successes: 0, byOutlet: {}, reasons: {}, routes: {}, skipped: { video: 0, robots: 0 } });
+  const robotsChecker = robots || createRobotsChecker({ fetch });
+  // Extraction telemetry is kept per pack (an aggregate, never blended).
+  const extractionByPack = {};
+  const extractionFor = (row) => (extractionByPack[packOf(row)] ||= newExtraction());
   // Video pages carry no article text: known from the URL, never fetched,
   // counted beside the rate, final on the first sighting (DEFECTS.md v2-35).
   if (!dryRun) {
     for (const row of wantsText) {
       if (row.fulltext || row.fulltextError || !isVideoUrl(row.link)) continue;
       row.fulltextError = { reason: 'no_article', detail: 'video page', stage: 'extract', chars: null, attempts: maxAttempts, at: new Date(now()).toISOString() };
-      extraction.skipped.video++;
+      extractionFor(row).skipped.video++;
     }
   }
   // Retry policy: a failed fetch is retried on later runs until maxAttempts
   // total, then the row is UNRESOLVED (DEFECTS.md v2-15). A video page and a
   // paywall teaser are final at once: nothing about them changes hourly.
-  const finalNow = (e) => e && (e.reason === 'no_article' || (e.reason === 'blocked' && e.detail === 'paywall'));
+  const finalNow = (e) => e && (e.reason === 'no_article' || (e.reason === 'blocked' && (e.detail === 'paywall' || /^robots\.txt/.test(e.detail || ''))));
   const toEscalate = dryRun ? [] : wantsText.filter((r) => !r.fulltext && !finalNow(r.fulltextError) && (r.fulltextError?.attempts || 0) < maxAttempts);
-  if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} row(s) to full text (${auditSampled} audit${extraction.skipped.video ? `, ${extraction.skipped.video} video page(s) skipped` : ''})`);
+  const videoSkipped = Object.values(extractionByPack).reduce((a, e) => a + e.skipped.video, 0);
+  if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} row(s) to full text (${auditSampled} audit${videoSkipped ? `, ${videoSkipped} video page(s) skipped` : ''})`);
   const timeoutFor = (row) => feeds.find((f) => f.name === row.publication)?.extractTimeoutMs || EXTRACT_TIMEOUT_MS;
   const count = (bag, key) => (bag[key] = (bag[key] || 0) + 1);
   await pool(toEscalate, extractConcurrency, async (row) => {
     const priorAttempts = row.fulltextError?.attempts || 0;
     row.fulltextError = null;
+    const extraction = extractionFor(row);
     extraction.attempts++;
     const o = (extraction.byOutlet[row.outlet] ||= { attempts: 0, successes: 0, reasons: {}, routes: {} });
     o.attempts++;
-    let ex = await fetchArticle(row.link, { fetch, timeoutMs: timeoutFor(row) });
-    let tried = ex.tried || [];
-    if (!ex.ok && remoteFetch && remoteWorthTrying(ex)) {
-      const remote = await remoteFetch(row.link, { timeoutMs: timeoutFor(row) });
-      tried = [...tried, 'vercel'];
-      // The remote answer replaces the runner's unless it is a plain error
-      // (the route itself failed) and the runner's reason says more.
-      if (remote.ok || remote.reason !== 'error' || ex.reason === 'error') ex = { ...remote, attempts: (ex.attempts || 0) + (remote.attempts || 1) };
+    // robots.txt first: a publisher that disallows Signal, or refuses to
+    // serve its robots.txt, is SOURCE BLOCKED without a fetch.
+    const rb = await robotsChecker.check(row.link);
+    let ex;
+    let tried;
+    if (rb.allowed) {
+      ex = await fetchArticle(row.link, { fetch, timeoutMs: timeoutFor(row) });
+      tried = ['robots', ...(ex.tried || [])];
+    } else {
+      ex = { ok: false, reason: rb.reason, detail: rb.detail, attempts: 0, ms: 0 };
+      tried = ['robots'];
+      if (rb.reason === 'blocked') extraction.skipped.robots++;
     }
     if (!ex.ok) {
-      const key = ex.detail && ex.detail !== ex.reason && /^(HTTP \d+|paywall|stub|consent wall|video page)$/.test(ex.detail) ? `${ex.reason}:${ex.detail}` : ex.reason;
+      const key = ex.detail && ex.detail !== ex.reason && /^(HTTP \d+|paywall|stub|consent wall|video page|robots\.txt disallows|robots\.txt refused \(HTTP \d+\))$/.test(ex.detail) ? `${ex.reason}:${ex.detail}` : ex.reason;
       count(extraction.reasons, key);
       count(o.reasons, key);
       row.fulltextError = { reason: ex.reason, detail: ex.detail, stage: 'extract', chars: ex.chars ?? null, attempts: finalNow(ex) ? maxAttempts : priorAttempts + 1, at: new Date(now()).toISOString() };
@@ -334,7 +344,26 @@ export async function runScan({
   };
 
   const finishedMs = now();
-  const summary = summarizeRun({ rows, feeds: collected.feeds, runId: id, extraction, golden: goldenReport, auditSampled });
+  // One summary per pack, each from that pack's rows and feeds only. The
+  // run's `summary` is the national pack's, for the original ledger; `packs`
+  // carries every pack's. The golden set is a property of the scorer, not of
+  // a pack, so its report rides with the national summary.
+  const feedPack = (f) => packOf(feedByName.get(f.name));
+  const packs = {};
+  for (const pack of PACKS) {
+    const packRows = rows.filter((r) => packOf(r) === pack.key);
+    const packFeeds = collected.feeds.filter((f) => feedPack(f) === pack.key);
+    if (!packRows.length && !packFeeds.length) continue;
+    packs[pack.key] = summarizeRun({
+      rows: packRows,
+      feeds: packFeeds,
+      runId: id,
+      extraction: extractionByPack[pack.key] || newExtraction(),
+      golden: pack.key === DEFAULT_PACK ? goldenReport : null,
+      auditSampled: packRows.filter((r) => r.auditSampledIn === id).length,
+    });
+  }
+  const summary = packs[DEFAULT_PACK] || summarizeRun({ rows: [], feeds: [], runId: id, extraction: newExtraction(), golden: goldenReport, auditSampled: 0 });
   const run = {
     id,
     startedAt,
@@ -345,8 +374,9 @@ export async function runScan({
     promptHashes: hashes,
     dryRun,
     config: { thinking: THINKING, effort: EFFORT, bodyChars: BODY_CHARS, reuseWindowHours: REUSE_WINDOW_HOURS, pricing: PRICING },
-    feeds: collected.feeds,
+    feeds: collected.feeds.map((f) => ({ ...f, pack: feedPack(f) })),
     summary,
+    packs,
     golden: goldenReport,
   };
   log(`[signal] done in ${run.durationMs} ms · ${summary.rows.scored}/${summary.rows.total} scored · ${delta.rows.length} fresh row(s), ${delta.carried.length} carried · $${summary.costUsd}`);

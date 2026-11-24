@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_PACK, PACK_KEYS } from '../pipeline/config.js';
 
 export const ALLOWED = {
   latest: { file: 'latest.json', type: 'application/json; charset=utf-8' },
@@ -37,13 +38,26 @@ export function repoCoordinates(env = process.env) {
  * Read one ledger file. Returns { ok: true, body, type, source } or
  * { ok: false, status, reason }. Never throws.
  */
-export async function readLedgerFile(key, { env = process.env, fetch = globalThis.fetch } = {}) {
+// Per-pack files live under packs/<key>/; the national pack is data/ itself.
+// The validation set is national only.
+export function packPath(key, pack) {
+  const entry = ALLOWED[key];
+  if (!entry) return null;
+  const p = pack || DEFAULT_PACK;
+  if (!PACK_KEYS.includes(p)) return null;
+  if (p === DEFAULT_PACK || key.startsWith('validation')) return entry.file;
+  return `packs/${p}/${entry.file}`;
+}
+
+export async function readLedgerFile(key, { env = process.env, fetch = globalThis.fetch, pack = DEFAULT_PACK } = {}) {
   const entry = ALLOWED[key];
   if (!entry) return { ok: false, status: 404, reason: 'unknown file' };
+  const file = packPath(key, pack);
+  if (!file) return { ok: false, status: 404, reason: 'unknown pack' };
 
   if (env.SIGNAL_DATA_LOCAL) {
     try {
-      const body = await fs.readFile(path.join(env.SIGNAL_DATA_DIR || 'data', entry.file), 'utf8');
+      const body = await fs.readFile(path.join(env.SIGNAL_DATA_DIR || 'data', file), 'utf8');
       return { ok: true, body, type: entry.type, source: 'local' };
     } catch (e) {
       return { ok: false, status: 404, reason: e?.message || 'not found' };
@@ -51,7 +65,7 @@ export async function readLedgerFile(key, { env = process.env, fetch = globalThi
   }
 
   const { owner, repo, ref } = repoCoordinates(env);
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/data/${entry.file}`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/data/${file}`;
   const headers = { 'User-Agent': 'signal-site', Accept: '*/*' };
   if (env.GITHUB_TOKEN) headers.Authorization = `token ${env.GITHUB_TOKEN}`;
   try {

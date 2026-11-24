@@ -78,10 +78,12 @@ export function blockedDetail(detail) {
   if (detail === 'paywall') return 'server-truncated paywall teaser';
   if (detail === 'consent wall') return 'consent wall';
   if (detail === 'stub') return 'stub page';
+  if (detail === 'robots.txt disallows') return 'robots.txt disallows Signal';
+  if (/^robots\.txt refused/.test(detail || '')) return 'publisher refuses to serve robots.txt';
   return detail || 'refused';
 }
 
-export const ROUTE_LABELS = { runner: 'RUNNER', 'alt-identity': 'RUNNER · SECOND IDENTITY', 'consent-cookie': 'RUNNER · CONSENT ACCEPTED', alternate: 'PUBLISHER TEXT RENDERING', vercel: 'VERCEL ROUTE' };
+export const ROUTE_LABELS = { robots: 'ROBOTS.TXT CHECK', runner: 'FETCHED AS SIGNAL' };
 export function routeLabel(route) {
   return ROUTE_LABELS[route] || String(route || '').toUpperCase();
 }

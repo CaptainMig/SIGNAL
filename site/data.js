@@ -13,7 +13,9 @@ async function getJson(url) {
     } catch {
       /* keep status */
     }
-    throw new Error(`${url}: ${reason}`);
+    const err = new Error(`${url}: ${reason}`);
+    err.status = r.status;
+    throw err;
   }
   return r.json();
 }
@@ -26,19 +28,30 @@ async function getText(url) {
 
 const byStart = (a, b) => String(a.started_at).localeCompare(String(b.started_at));
 
-export async function loadAll() {
+export const DEFAULT_PACK = 'national';
+
+// Every ledger file is read for ONE pack; nothing is blended across packs.
+// The national pack is the original ledger; other packs add `&pack=<key>`.
+export function fileUrl(file, pack = DEFAULT_PACK) {
+  return `${base}/data?file=${file}${pack && pack !== DEFAULT_PACK ? `&pack=${encodeURIComponent(pack)}` : ''}`;
+}
+
+export async function loadAll(pack = DEFAULT_PACK) {
   const [meta, latest, historyText, statsText, aggregate, daily, validation] = await Promise.all([
     getJson(`${base}/meta`),
-    getJson(`${base}/data?file=latest`),
-    getText(`${base}/data?file=history`).catch(() => ''),
-    getText(`${base}/data?file=stats`).catch(() => ''),
-    getJson(`${base}/data?file=aggregate`).catch(() => null),
-    getJson(`${base}/data?file=daily`).catch(() => null),
+    getJson(fileUrl('latest', pack)).catch((e) => {
+      if (pack !== DEFAULT_PACK && e.status === 404) return null; // a pack with no run yet
+      throw e;
+    }),
+    getText(fileUrl('history', pack)).catch(() => ''),
+    getText(fileUrl('stats', pack)).catch(() => ''),
+    getJson(fileUrl('aggregate', pack)).catch(() => null),
+    getJson(fileUrl('daily', pack)).catch(() => null),
     getJson(`${base}/data?file=validation-agreement`).catch(() => null),
   ]);
   const history = parseCsv(historyText).filter((r) => r.run_id).sort(byStart);
   const stats = parseCsv(statsText).filter((r) => r.run_id).sort(byStart);
-  return { meta, latest, history, stats, aggregate, daily, validation };
+  return { pack, meta, latest, history, stats, aggregate, daily, validation };
 }
 
 // The blind labelling set, loaded only on the /validate route.

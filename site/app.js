@@ -1,7 +1,7 @@
 // Signal v2 — static, read-only site. Loads the ledger at runtime and renders
 // one of five views. No model calls, no writes, no placeholder numbers: a
 // panel whose data is not computed yet says so.
-import { loadAll, loadValidationSet } from './data.js';
+import { DEFAULT_PACK, loadAll, loadValidationSet } from './data.js';
 import { esc, fmt } from './ui.js';
 import { renderDeck, wireDeck } from './deck.js';
 import { renderHeadlines, wireHeadlines } from './headlines.js';
@@ -19,7 +19,48 @@ const ROUTES = [
   { path: '/method', label: 'METHOD', view: 'method' },
 ];
 
-const state = { data: null, error: null };
+const PACK_STORAGE_KEY = 'signal.pack';
+const state = { data: null, error: null, pack: initialPack() };
+
+// The active pack: ?pack= in the URL, else the device's last choice, else
+// national. Only keys /api/meta knows are honoured once it has loaded.
+function initialPack() {
+  try {
+    const fromUrl = new URL(location.href).searchParams.get('pack');
+    if (fromUrl) return fromUrl;
+    return localStorage.getItem(PACK_STORAGE_KEY) || DEFAULT_PACK;
+  } catch {
+    return DEFAULT_PACK;
+  }
+}
+
+function packHref(path, pack) {
+  return pack && pack !== DEFAULT_PACK ? `${path}?pack=${encodeURIComponent(pack)}` : path;
+}
+
+async function switchPack(pack) {
+  if (pack === state.pack) return;
+  state.pack = pack;
+  try {
+    localStorage.setItem(PACK_STORAGE_KEY, pack);
+  } catch {
+    /* per-device convenience */
+  }
+  history.replaceState({}, '', packHref(location.pathname, pack));
+  document.getElementById('main').innerHTML = `<p class="mono muted loading">LOADING ${esc(pack.toUpperCase())} PACK…</p>`;
+  try {
+    state.data = await loadAll(pack);
+    state.error = null;
+  } catch (e) {
+    state.error = e.message;
+  }
+  render();
+}
+
+function renderPackSwitch(meta, current) {
+  const packs = meta?.packs?.length ? meta.packs : [{ key: DEFAULT_PACK, label: 'NATIONAL' }];
+  return `<span class="chip packs" role="group" aria-label="Feed pack">PACK ${packs.map((p) => `<button type="button" data-pack="${esc(p.key)}" class="${p.key === current ? 'active' : ''}" aria-pressed="${p.key === current ? 'true' : 'false'}" title="${esc(p.description || '')}">${esc(p.label)}</button>`).join('')}</span>`;
+}
 
 function route() {
   const p = location.pathname.replace(/\/+$/, '') || '/';
@@ -38,7 +79,7 @@ function tvButton(snap) {
 
 function renderNav(current) {
   const nav = document.querySelector('.nav');
-  nav.innerHTML = ROUTES.map((r) => `<a href="${r.path}" data-link class="${current.view === r.view || (current.view === 'article' && r.view === 'headlines') ? 'active' : ''}">${r.label}</a>`).join('') + tvButton(getTv()?.snapshot());
+  nav.innerHTML = ROUTES.map((r) => `<a href="${packHref(r.path, state.pack)}" data-link class="${current.view === r.view || (current.view === 'article' && r.view === 'headlines') ? 'active' : ''}">${r.label}</a>`).join('') + tvButton(getTv()?.snapshot());
 }
 
 function reflectTv(snap) {
@@ -46,10 +87,11 @@ function reflectTv(snap) {
   if (b) b.outerHTML = tvButton(snap);
 }
 
-function renderChips({ latest, history, meta }) {
+function renderChips({ latest, history, meta, pack }) {
   const el = document.getElementById('chips');
+  const packChip = renderPackSwitch(meta, pack || DEFAULT_PACK);
   if (!latest || !latest.id || !latest.rows?.length) {
-    el.innerHTML = `<span class="chip warn">NO RUN RECORDED YET</span><span class="chip">METHODOLOGY V2</span>`;
+    el.innerHTML = `${packChip}<span class="chip warn">NO RUN RECORDED YET${pack && pack !== DEFAULT_PACK ? ' FOR THIS PACK' : ''}</span><span class="chip">METHODOLOGY V2</span>`;
     return;
   }
   const finished = Date.parse(latest.finishedAt);
@@ -67,6 +109,7 @@ function renderChips({ latest, history, meta }) {
     if (next.getTime() <= Date.now()) next.setUTCHours(next.getUTCHours() + 1);
   }
   el.innerHTML = [
+    packChip,
     `<span class="chip ${stale ? 'warn' : 'live'}">${stale ? `LEDGER STALE · ${fmt.age(latest.finishedAt)} OLD` : 'LIVE · LEDGER'}</span>`,
     `<span class="chip">LAST RUN ${fmt.dateEt(latest.finishedAt)} ${fmt.et(latest.finishedAt)}</span>`,
     `<span class="chip">NEXT RUN ${fmt.et(next.toISOString())}</span>`,
@@ -86,7 +129,12 @@ function render() {
   }
   if (!state.data) return;
   renderChips(state.data);
-  document.title = `Signal · ${current.view === 'article' ? 'Article' : ROUTES.find((r) => r.view === current.view)?.label || 'Media Integrity Scanner'}`;
+  const packLabel = state.data.meta?.packs?.find((p) => p.key === state.pack)?.label;
+  document.title = `Signal · ${current.view === 'article' ? 'Article' : ROUTES.find((r) => r.view === current.view)?.label || 'Media Integrity Scanner'}${packLabel && state.pack !== DEFAULT_PACK ? ` · ${packLabel}` : ''}`;
+  if (!state.data.latest && current.view !== 'method' && current.view !== 'validate') {
+    main.innerHTML = `<div class="panel"><div class="empty">No run recorded yet for the ${esc(packLabel || state.pack)} pack. Its first scan writes the files this view reads.</div></div>`;
+    return;
+  }
   switch (current.view) {
     case 'deck':
       main.innerHTML = renderDeck(state.data);
@@ -129,6 +177,11 @@ document.addEventListener('click', (e) => {
     getTv()?.toggle();
     return;
   }
+  const pk = e.target.closest('button[data-pack]');
+  if (pk) {
+    switchPack(pk.dataset.pack);
+    return;
+  }
   const a = e.target.closest('a[data-link]');
   if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
@@ -142,8 +195,16 @@ window.addEventListener('popstate', render);
 const dock = document.getElementById('tv-dock');
 if (dock) mountTv(dock).subscribe(reflectTv);
 
-loadAll()
+loadAll(state.pack)
   .then((data) => {
+    // An unknown pack in the URL or storage falls back to national.
+    if (data.meta?.packs?.length && !data.meta.packs.some((p) => p.key === state.pack)) {
+      state.pack = DEFAULT_PACK;
+      return loadAll(state.pack).then((d) => {
+        state.data = d;
+        render();
+      });
+    }
     state.data = data;
     render();
   })

@@ -43,6 +43,7 @@ export function renderDeck(data) {
     `<section class="row">${goldenPanel(ctx)}${slamPanel(ctx)}</section>`,
     section('tone', 'TONE', 'MAP · TRAIL · BY HOUR', `<div class="row">${renderToneSection(ctx)}${toneByHourPanel(ctx)}</div>`),
     section('outlets', 'OUTLETS · ROLLING 7D', `RANKED AT n ≥ ${latest.scorecards?.minN ?? 20} WITH TEXT AND ≥ ${latest.scorecards?.minDays ?? 3} DAYS · SHRUNK TOWARD POOLED RATE`, outletsBody(ctx)),
+    latest.metros ? section('metros', 'METROS · ROLLING 7D', `PACK-LEVEL NUMBERS ABOVE ARE THE AGGREGATE · A METRO SHOWS FIGURES AT n ≥ ${latest.metros.minN} WITH TEXT OVER ≥ ${latest.metros.minDays} DAYS`, metrosBody(ctx)) : '',
   ].join('');
 }
 
@@ -225,8 +226,8 @@ function runHealthDetail(ctx) {
 // Extraction success by outlet, with failure reasons and winning routes.
 // Rows are sorted by attempts; the target line names the operator's bar.
 export const EXTRACTION_TARGET_PCT = 85;
-const REASON_LABELS = { 'blocked:HTTP 403': 'REFUSED 403', 'blocked:HTTP 401': 'REFUSED 401', 'blocked:HTTP 451': 'REFUSED 451', 'blocked:paywall': 'PAYWALL TEASER', 'blocked:consent wall': 'CONSENT WALL', 'blocked:stub': 'STUB', 'no_article:video page': 'VIDEO PAGE', timeout: 'TIMEOUT', error: 'ERROR', blocked: 'BLOCKED' };
-const ROUTE_SHORT = { runner: 'RUNNER', 'alt-identity': '2ND IDENTITY', 'consent-cookie': 'CONSENT', alternate: 'TEXT RENDERING', vercel: 'VERCEL' };
+const REASON_LABELS = { 'blocked:HTTP 403': 'REFUSED 403', 'blocked:HTTP 401': 'REFUSED 401', 'blocked:HTTP 451': 'REFUSED 451', 'blocked:paywall': 'PAYWALL TEASER', 'blocked:consent wall': 'CONSENT WALL', 'blocked:stub': 'STUB', 'blocked:robots.txt disallows': 'ROBOTS.TXT', 'blocked:robots.txt refused (HTTP 403)': 'ROBOTS.TXT REFUSED', 'no_article:video page': 'VIDEO PAGE', timeout: 'TIMEOUT', error: 'ERROR', blocked: 'BLOCKED' };
+const ROUTE_SHORT = { runner: 'SIGNAL' };
 const bagText = (o, labels) =>
   Object.entries(o || {})
     .sort((a, b) => b[1] - a[1])
@@ -248,7 +249,7 @@ export function extractionPanel(ex) {
   return `<div style="display:flex;flex-direction:column;gap:10px">
     <div class="hero" style="gap:10px"><div class="mid" style="color:${color}">${pct == null ? '—' : fmt.num(pct, 0)}<span class="unit">%</span></div><div class="note">ARTICLE TEXT EXTRACTED · THIS RUN<br>${ex.successes} OF ${ex.attempts} FETCHES · TARGET ≥ ${EXTRACTION_TARGET_PCT}% · ${skipped} VIDEO PAGE${skipped === 1 ? '' : 'S'} SKIPPED (NO ARTICLE TEXT, COUNTED BESIDE)</div></div>
     <div class="note">FAILURES · ${ex.reasons && Object.keys(ex.reasons).length ? bagText(ex.reasons, REASON_LABELS) : ex.attempts > ex.successes ? 'REASONS RECORDED FROM THE NEXT RUN' : 'NONE'}</div>
-    <div class="note">ROUTES THAT SUCCEEDED · ${ex.routes && Object.keys(ex.routes).length ? bagText(ex.routes, ROUTE_SHORT) : 'RECORDED FROM THE NEXT RUN'} · SECOND NETWORK ROUTE ${esc(String(ex.remote || 'not configured').toUpperCase())}</div>
+    <div class="note">FETCHED AS SIGNAL, ONCE, AFTER ROBOTS.TXT · ${ex.skipped?.robots || 0} DISALLOWED BY ROBOTS.TXT (NEVER FETCHED)</div>
     ${outlets.length ? `<div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">OUTLET</th><th>FETCHED</th><th>RATE</th><th class="l">FAILURES</th><th class="l">ROUTES</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="note">NO FETCHES THIS RUN</div>`}
   </div>`;
 }
@@ -412,6 +413,31 @@ export function scorecardsTable(ctx, { def = 'broad' } = {}) {
     <tbody>${tr}</tbody>
   </table></div>
   <div class="note">${sc.ranked} OF ${sc.cards.length} OUTLETS RANKED · ${sc.rows} UNIQUE ROWS OVER ${sc.runs} RUNS · POOLED ${def.toUpperCase()} ${fmt.range(sc.pooled[def].low, sc.pooled[def].high)}% · SHRINKAGE STRENGTH ${sc.strength} PSEUDO-ROWS</div>`;
+}
+
+// Per-metro figures, only where a metro clears the same gate as an outlet.
+export function metrosTable(ctx, { def = 'broad' } = {}) {
+  const sc = ctx.latest.metros;
+  if (!sc) return '';
+  const tr = sc.cards
+    .map((c) => {
+      const name = `<td class="l"><div class="name">${esc(c.metro)}</div><div class="sub">${esc(c.outlets.join(' · '))}</div></td>`;
+      if (c.toneOnly) return `<tr>${name}<td>${c.n}</td><td colspan="3" class="l muted">NO ARTICLE TEXT YET · TONE ONLY</td><td>${fmt.num(c.sens, 1)}</td></tr>`;
+      if (!c.ranked) return `<tr>${name}<td>${c.n}</td><td colspan="3" class="l muted">NOT YET · ${esc(c.progress)}</td><td>${fmt.num(c.sens, 1)}</td></tr>`;
+      const d = c[def];
+      const w = Math.max(0.5, d.wilsonHigh.hi - d.wilsonLow.lo);
+      return `<tr>${name}<td>${c.n}<div class="sub">${c.nText} TEXT · ${c.days} D</div></td><td>${fmt.range(d.low, d.high)}%<div class="sub">RANGE</div></td><td>${fmt.range(d.shrunkLow, d.shrunkHigh)}%<div class="sub">SHRUNK</div></td><td class="l"><div class="ibar" title="Wilson 95% interval from ${d.wilsonLow.lo}% to ${d.wilsonHigh.hi}%"><div class="band" style="left:${d.wilsonLow.lo.toFixed(1)}%;width:${w.toFixed(1)}%"></div><div class="tick" style="left:${((d.low + d.high) / 2).toFixed(1)}%"></div></div></td><td>${fmt.num(c.sens, 1)}</td></tr>`;
+    })
+    .join('');
+  return `<div class="scrollbox"><table class="data" style="min-width:680px">
+    <thead><tr><th class="l">METRO</th><th>n · 7D</th><th>FRAMING INTEGRITY · ${def.toUpperCase()}</th><th>SHRUNK</th><th class="l" style="width:22%">WILSON 95%</th><th>SENS.</th></tr></thead>
+    <tbody>${tr || `<tr><td colspan="6" class="l muted">NO METRO ROWS IN THE WINDOW YET</td></tr>`}</tbody>
+  </table></div>
+  <div class="note">${sc.ranked} OF ${sc.cards.length} METROS SHOWING FIGURES · THE PACK-LEVEL RATE IS THE AGGREGATE; A METRO IS NEVER COMPARED ACROSS PACKS</div>`;
+}
+
+function metrosBody(ctx) {
+  return metrosTable(ctx, { def: 'broad' });
 }
 
 function outletsBody(ctx) {

@@ -39,6 +39,24 @@ fix is itself a defect.
   checks appears nowhere: code, comments, commits, UI, docs, data.
 - The ledger is append-only. Scan files are never rewritten; `history.csv`
   rows are never edited; a schema change is a new file, not a migration.
+- Fetch policy: one honest user agent naming Signal with a contact URL, for
+  feeds and articles alike; `robots.txt` honoured before every article
+  fetch; one fetch, never a retry under another name, no consent-cookie
+  workarounds, no second network route. A publisher that refuses or
+  disallows Signal is SOURCE BLOCKED and scored headline-only.
+
+## Feed packs
+
+Every feed has a `pack` (`national`, `regional`) and a `scope` (`business`,
+`general`); the original 24 are `national`. Every aggregate,
+history row, stats row, scorecard, daily summary and site view is computed
+per pack, never blended. National is the ledger at `data/`; other packs keep
+their derived files under `data/packs/<key>/` (scan files are shared; rows
+carry `pack` and `metro`). Pack-level numbers are the aggregate; a metro
+shows its own figures only at 20+ text rows over 3+ days. Adding a feed
+means reading its `robots.txt` and
+terms first and recording `coverage` and `coverageReason` on the feed; a
+publisher that disallows article fetching gets `thinBody: true`.
 
 ## Repository layout
 

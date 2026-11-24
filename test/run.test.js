@@ -69,7 +69,7 @@ test('a full run: rows, modes, escalation outcomes, finals, summary', async () =
   assert.ok(!serialized.includes('The Senate passed the budget bill 52'), 'feed summary must not be stored');
   assert.ok(!serialized.includes('late-night session that stretched'), 'extracted article text must not be stored');
   assert.ok(!serialized.includes('Subscribe to continue'), 'stub text must not be stored');
-  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction', 'byline'];
+  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction', 'pack', 'metro', 'byline'];
   for (const r of rows) for (const k of Object.keys(r)) assert.ok(ALLOWED.includes(k), `unexpected row field ${k}`);
   const SCORE_KEYS = ['mode', 'verdict', 'fidelity', 'sens', 'click', 'rationale', 'provisional', 'model', 'promptHash', 'usage', 'latencyMs', 'at', 'chars', 'carriedFrom'];
   for (const r of rows) for (const s of [r.sweep, r.fulltext]) if (s) for (const k of Object.keys(s)) assert.ok(SCORE_KEYS.includes(k), `unexpected score field ${k}`);
@@ -274,37 +274,40 @@ test('golden set is scored on its cadence and compared with the baseline', async
   assert.equal(skipped.run.summary.golden, null);
 });
 
-test('video pages are never fetched; the remote route is tried when the runner is refused and recorded', async () => {
-  const { remoteWorthTrying } = await import('../pipeline/run.js');
-  assert.equal(remoteWorthTrying({ ok: false, reason: 'blocked', detail: 'HTTP 403' }), true);
-  assert.equal(remoteWorthTrying({ ok: false, reason: 'timeout' }), true);
-  assert.equal(remoteWorthTrying({ ok: false, reason: 'blocked', detail: 'paywall' }), false);
-  assert.equal(remoteWorthTrying({ ok: false, reason: 'no_article' }), false);
-  assert.equal(remoteWorthTrying({ ok: true }), false);
+test('video pages are never fetched; robots.txt is honoured before every fetch and a refusal is SOURCE BLOCKED without a fetch', async () => {
   const feed = `<rss><channel>
-    <item><title>Mayor slams council over transit vote delay again</title><link>https://example-c.com/news/transit</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>The mayor criticised the council.</description></item>
-    <item><title>Mayor slams critics in a video statement tonight</title><link>https://example-c.com/video/statement</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>Video.</description></item>
+    <item><title>Mayor slams council over transit vote delay again</title><link>https://allowed.example/news/transit</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>The mayor criticised the council.</description></item>
+    <item><title>Mayor slams critics in a video statement tonight</title><link>https://allowed.example/video/statement</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>Video.</description></item>
+    <item><title>Mayor slams the governor over the bridge funding row</title><link>https://closed.example/news/bridge</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>Row.</description></item>
+    <item><title>Mayor slams the auditor over the late pension report</title><link>https://refusing.example/news/pension</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>Report.</description></item>
   </channel></rss>`;
-  const fetch = mockFetch({ 'https://feed-c/': { status: 200, body: feed }, 'https://example-c.com/news/transit': { status: 403, body: '' } });
-  const remoteCalls = [];
-  const remoteFetch = async (url) => {
-    remoteCalls.push(url);
-    return { ok: true, text: fixture('article.html').replace(/<[^>]+>/g, ' ').slice(0, 3000), chars: 3000, title: 'T', httpStatus: 200, route: 'vercel', attempts: 1, ms: 5 };
-  };
+  const fetch = mockFetch({
+    'https://feed-c/': { status: 200, body: feed },
+    'https://allowed.example/robots.txt': { status: 200, body: 'User-agent: *\nDisallow: /search\n' },
+    'https://allowed.example/news/transit': { status: 200, body: fixture('article.html') },
+    'https://closed.example/robots.txt': { status: 200, body: 'User-agent: GPTBot\nDisallow: /\n\nUser-agent: Signal\nDisallow: /news/\n' },
+    'https://refusing.example/robots.txt': { status: 403, body: '' },
+  });
   const scorer = createScorer({ client: model(), model: 'claude-sonnet-5-5', now });
   const feeds = [{ name: 'C', outlet: 'Outlet C', owner: 'O', url: 'https://feed-c/', extractTimeoutMs: 500 }];
-  const { rows, run } = await runScan({ scorer, fetch, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0, remoteFetch });
+  const { rows, run } = await runScan({ scorer, fetch, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0 });
   const video = rows.find((r) => r.link.includes('/video/'));
   assert.deepEqual([video.fulltextError.reason, video.fulltextError.detail, video.escalation.unresolved], ['no_article', 'video page', true]);
-  assert.ok(!fetch.calls.includes('https://example-c.com/video/statement'), 'never fetched');
-  const text = rows.find((r) => r.link.includes('/news/'));
-  assert.deepEqual(remoteCalls, ['https://example-c.com/news/transit']);
-  assert.equal(text.fulltext.verdict, 'MISLEADING');
-  assert.deepEqual(text.extraction, { route: 'vercel', tried: ['runner', 'alt-identity', 'vercel'], fetches: 3, ms: 5, source: 'markup' });
+  assert.ok(!fetch.calls.includes('https://allowed.example/video/statement'), 'never fetched');
+  const ok = rows.find((r) => r.link.endsWith('/news/transit'));
+  assert.equal(ok.fulltext.verdict, 'MISLEADING');
+  assert.deepEqual(ok.extraction, { route: 'runner', tried: ['robots', 'runner'], fetches: 1, ms: ok.extraction.ms, source: 'markup' });
+  const closed = rows.find((r) => r.link.includes('closed.example'));
+  assert.deepEqual([closed.fulltextError.reason, closed.fulltextError.detail, closed.escalation.unresolved], ['blocked', 'robots.txt disallows', true], 'disallowed for Signal: final at once');
+  assert.ok(!fetch.calls.includes('https://closed.example/news/bridge'), 'the article is never fetched');
+  assert.deepEqual(closed.extraction, { route: null, tried: ['robots'], fetches: 0, ms: 0 });
+  const refusing = rows.find((r) => r.link.includes('refusing.example'));
+  assert.deepEqual([refusing.fulltextError.reason, refusing.fulltextError.detail], ['blocked', 'robots.txt refused (HTTP 403)']);
+  assert.equal(fetch.calls.filter((u) => u.endsWith('/robots.txt')).length, 3, 'one robots.txt fetch per host');
+  assert.equal(fetch.calls.filter((u) => u.includes('allowed.example/robots.txt')).length, 1);
   const ex = run.summary.extraction;
-  assert.deepEqual([ex.attempts, ex.successes, ex.skipped.video, ex.remote], [1, 1, 1, 'configured']);
-  assert.deepEqual(ex.routes, { vercel: 1 });
-  assert.deepEqual(ex.byOutlet['Outlet C'].routes, { vercel: 1 });
+  assert.deepEqual([ex.attempts, ex.successes, ex.skipped.video, ex.skipped.robots], [3, 1, 1, 2]);
+  assert.deepEqual(ex.reasons, { 'blocked:robots.txt disallows': 1, 'blocked:robots.txt refused (HTTP 403)': 1 });
   assert.equal(run.summary.escalation.noArticle, 1);
 });
 
@@ -319,6 +322,28 @@ test('tooSoon: a run within the minimum gap of the previous run is skipped unles
   assert.equal(tooSoon(null, t, gap), false);
   assert.equal(tooSoon({ startedAt: 'garbage' }, t, gap), false);
   assert.equal(tooSoon({ startedAt: '2026-11-24T01:09:00Z' }, t, 0), false);
+});
+
+test('packs: rows carry their feed pack and metro; each pack is summarized from its own rows and feeds only', async () => {
+  const feed = (title, link) => `<rss><channel><item><title>${title}</title><link>${link}</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>A plain description of the story.</description></item></channel></rss>`;
+  const fetch = mockFetch({
+    'https://feed-nat/': { status: 200, body: feed('National headline that is long enough', 'https://nat.example/1') },
+    'https://feed-reg/': { status: 200, body: feed('Regional headline that is long enough', 'https://reg.example/1') },
+    'https://feed-reg2/': { status: 503, body: '' },
+  });
+  const feeds = [
+    { name: 'Nat', outlet: 'Nat', owner: 'O', url: 'https://feed-nat/', pack: 'national' },
+    { name: 'Reg', outlet: 'Reg', owner: 'O', url: 'https://feed-reg/', pack: 'regional', metro: 'Kansas City' },
+    { name: 'Reg2', outlet: 'Reg2', owner: 'O', url: 'https://feed-reg2/', pack: 'regional', metro: 'Baltimore' },
+  ];
+  const scorer = createScorer({ client: model(), model: 'claude-sonnet-5-5', now });
+  const { run, rows } = await runScan({ scorer, fetch, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0 });
+  assert.deepEqual(rows.map((r) => [r.pack, r.metro]), [['national', null], ['regional', 'Kansas City']]);
+  assert.deepEqual(Object.keys(run.packs).sort(), ['national', 'regional']);
+  assert.equal(run.summary, run.packs.national, 'the run summary is the national pack');
+  assert.deepEqual([run.packs.national.rows.total, run.packs.national.feeds.total, run.packs.national.feeds.live], [1, 1, 1]);
+  assert.deepEqual([run.packs['regional'].rows.total, run.packs['regional'].feeds.total, run.packs['regional'].feeds.dead], [1, 2, 1]);
+  assert.deepEqual(run.feeds.map((f) => f.pack), ['national', 'regional', 'regional']);
 });
 
 test('rows carry a byline from the feed, or from the article page when the feed gave none, else none; coverage is summarized', async () => {

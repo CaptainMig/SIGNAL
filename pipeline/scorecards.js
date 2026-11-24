@@ -31,11 +31,23 @@ function dayOf(row) {
   return t ? String(t).slice(0, 10) : null;
 }
 
-export function buildScorecards(runs, { minN = SCORECARD_MIN_N, minDays = SCORECARD_MIN_DAYS, windowDays = SCORECARD_WINDOW_DAYS, strength = SHRINK_STRENGTH } = {}) {
+// Rows grouped by metro (rows without one are skipped). Per-metro figures
+// are gated exactly like outlets: n ≥ minN text rows over ≥ minDays days.
+export function groupByMetro(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    if (!r.metro) continue;
+    if (!m.has(r.metro)) m.set(r.metro, []);
+    m.get(r.metro).push(r);
+  }
+  return m;
+}
+
+export function buildScorecards(runs, { minN = SCORECARD_MIN_N, minDays = SCORECARD_MIN_DAYS, windowDays = SCORECARD_WINDOW_DAYS, strength = SHRINK_STRENGTH, groupBy = 'outlet' } = {}) {
   const rows = uniqueRows(runs);
   const fiRows = rows.filter(countsForFI);
   const pooled = { strict: framingIntegrity(fiRows, 'strict'), broad: framingIntegrity(fiRows, 'broad') };
-  const groups = groupByOutlet(rows);
+  const groups = groupBy === 'metro' ? groupByMetro(rows) : groupByOutlet(rows);
   const cards = [];
   for (const [outlet, group] of groups) {
     const scored = group.filter(isScored);
@@ -46,7 +58,8 @@ export function buildScorecards(runs, { minN = SCORECARD_MIN_N, minDays = SCOREC
     const broad = framingIntegrity(text, 'broad');
     const card = {
       outlet,
-      owner: group[0].owner,
+      ...(groupBy === 'metro' ? { metro: outlet, outlets: [...new Set(group.map((r) => r.outlet || r.publication))].sort() } : {}),
+      owner: groupBy === 'metro' ? null : group[0].owner,
       publications: [...new Set(group.map((r) => r.publication))],
       n: group.length,
       nText: text.length,
@@ -77,6 +90,7 @@ export function buildScorecards(runs, { minN = SCORECARD_MIN_N, minDays = SCOREC
   }
   cards.sort((a, b) => (b.ranked - a.ranked) || (b.nText - a.nText) || a.outlet.localeCompare(b.outlet));
   return {
+    groupBy,
     windowDays,
     minN,
     minDays,

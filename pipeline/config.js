@@ -67,71 +67,17 @@ export const EXTRACT_CONCURRENCY = 2;
 export const EXTRACT_MIN_CHARS = 400; // below this the page is a stub (paywall / consent shell)
 export const EXTRACT_MAX_CHARS = 12_000;
 
-// Fetch identities for article pages, tried in order (pipeline/extract.js).
-// The first is a complete Chrome header set: the bare user agent alone is
-// tarpitted by at least one publisher. The second is a different browser
-// family, the "retry with a different user agent".
-export const EXTRACT_IDENTITIES = [
-  {
-    key: 'chrome',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-      'Sec-Ch-Ua-Mobile': '?0',
-      'Sec-Ch-Ua-Platform': '"Windows"',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
-      'Sec-Fetch-User': '?1',
-      'Upgrade-Insecure-Requests': '1',
-    },
-  },
-  {
-    key: 'firefox',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Upgrade-Insecure-Requests': '1',
-    },
-  },
-];
 
-// Hosts the Vercel-side fetch route (api/fetch-article.js) will fetch from:
-// the publishers in FEEDS and nothing else, so the route is never an open
-// proxy. Matched on the registrable domain.
-export const ARTICLE_HOSTS = [
-  'apnews.com',
-  'reuters.com',
-  'washingtonpost.com',
-  'bbc.com',
-  'bbc.co.uk',
-  'npr.org',
-  'foxnews.com',
-  'cbsnews.com',
-  'go.com',
-  'nbcnews.com',
-  'cnn.com',
-  'cnbc.com',
-  'thehill.com',
-  'politico.com',
-  'theguardian.com',
-  'wsj.com',
-  'nytimes.com',
-  'latimes.com',
-  'nypost.com',
-  'sky.com',
-  'fortune.com',
-  'ft.com',
-];
 
 // Body budgets sent to the model, by mode.
 export const BODY_CHARS = { sweep: 1200, fulltext: 8000, tone: 0 };
 
-export const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+// Fetch policy (operator decision, DEFECTS.md v2-40): one honest user agent
+// that names Signal, with a contact URL, for feeds, robots.txt and article
+// pages alike. No browser identities, no rotation, no workarounds. The
+// robots.txt product token is "Signal".
+export const USER_AGENT = 'Mozilla/5.0 (compatible; Signal/2; +https://anthony-signal.vercel.app/method)';
+export const ROBOTS_TIMEOUT_MS = 8_000;
 
 // News feeds. `name` is the feed label (publication), `outlet` the outlet
 // identity every comparison and ranking groups on (three WaPo feeds are one
@@ -140,7 +86,7 @@ export const USER_AGENT =
 // text (Google News aggregation, paywalled teasers): those rows are scored for
 // tone only (sensationalism + clickbait) and never for fidelity.
 // Ported from the v1 feed list; Google News recoveries are labelled honestly.
-export const FEEDS = [
+const NATIONAL_FEEDS = [
   {
     name: 'AP (via Google News)',
     outlet: 'AP',
@@ -206,6 +152,85 @@ export const FEEDS = [
   // Paywalled: the feed carries a teaser, not the article. Tone only.
   { name: 'Financial Times', outlet: 'Financial Times', owner: 'Nikkei', url: 'https://www.ft.com/rss/home', thinBody: true },
 ];
+
+// ---------------------------------------------------------------------------
+// Feed packs. Every feed belongs to exactly one pack; every aggregate,
+// history row, stats row, scorecard, daily summary and site view is computed
+// per pack. Nothing is ever blended across packs. The national pack is the
+// original ledger (data/); every other pack keeps its own derived files
+// under data/packs/<key>/ (scan files are shared: rows carry `pack`).
+// ---------------------------------------------------------------------------
+export const PACKS = [
+  { key: 'national', label: 'NATIONAL', description: 'Twenty-four national and international outlets.' },
+  {
+    key: 'regional',
+    label: 'REGIONAL',
+    description: 'Local coverage in four metros: the Business Journals headline feed plus local sources per metro, each tagged business or general.',
+    metros: ['Washington DC', 'Baltimore', 'New York', 'Kansas City'],
+  },
+];
+export const DEFAULT_PACK = 'national';
+export const PACK_KEYS = PACKS.map((p) => p.key);
+
+// Regional pack. Coverage per feed was set from the publisher's
+// robots.txt and terms (the review is in the feed-packs pull request and
+// README): `thinBody: true` is headline-only / tone mode, used where the
+// publisher names AI agents in robots.txt, restricts its RSS feed to
+// personal non-commercial use, bars automated access in its feed terms, or
+// refuses the fetch outright (the Business Journals, read through Google
+// News). `coverage` records the reason in one word for the method page.
+const bizj = (metro, slug) => ({
+  name: `${metro} Business Journal (via Google News)`,
+  outlet: `${metro} Business Journal`,
+  owner: 'American City Business Journals',
+  url: `https://news.google.com/rss/search?q=site:bizjournals.com/${slug}+when:2d&hl=en-US&gl=US&ceid=US:en`,
+  thinBody: true,
+  scope: 'business',
+  coverage: 'headline-only',
+  coverageReason: 'publisher refuses automated feed access; robots.txt names AI agents',
+});
+const REGIONAL_FEEDS = [
+  // Washington DC
+  { ...bizj('Washington', 'washington'), metro: 'Washington DC' },
+  { name: 'WUSA9 Money', scope: 'business', outlet: 'WUSA9', owner: 'TEGNA', metro: 'Washington DC', url: 'https://www.wusa9.com/feeds/syndication/rss/money', coverage: 'full-text', coverageReason: 'robots.txt allows; no AI-agent directive; no RSS restriction' },
+  { name: 'Technical.ly DC', scope: 'business', outlet: 'Technical.ly', owner: 'Technically Media', metro: 'Washington DC', url: 'https://technical.ly/?s=&market=dc&feed=rss2', coverage: 'full-text', coverageReason: 'robots.txt allows; no AI-agent directive; no terms page found' },
+  { name: 'WAMU', scope: 'general', outlet: 'WAMU', owner: 'American University / NPR', metro: 'Washington DC', url: 'https://wamu.org/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows anthropic-ai' },
+  // Baltimore
+  { ...bizj('Baltimore', 'baltimore'), metro: 'Baltimore' },
+  { name: 'WMAR-2 Money', scope: 'business', outlet: 'WMAR-2', owner: 'E.W. Scripps', metro: 'Baltimore', url: 'https://www.wmar2news.com/money.rss', coverage: 'full-text', coverageReason: 'robots.txt blocks only training crawlers (GPTBot, Google-Extended); no RSS restriction' },
+  { name: 'CBS Baltimore', scope: 'general', outlet: 'CBS Baltimore', owner: 'Paramount / CBS', metro: 'Baltimore', url: 'https://www.cbsnews.com/baltimore/latest/rss/main', coverage: 'full-text', coverageReason: 'robots.txt blocks only GPTBot; same host and terms as the national CBS feed; general local news, no business section feed' },
+  { name: 'WYPR', scope: 'general', outlet: 'WYPR', owner: 'Baltimore Public Media / NPR', metro: 'Baltimore', url: 'https://www.wypr.org/news.rss', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows anthropic-ai and ClaudeBot' },
+  // New York
+  { ...bizj('New York', 'newyork'), metro: 'New York' },
+  { name: 'Gothamist', scope: 'general', outlet: 'Gothamist', owner: 'New York Public Radio', metro: 'New York', url: 'https://gothamist.com/feed', thinBody: true, coverage: 'headline-only', coverageReason: 'feed terms: RSS for personal, non-commercial use only' },
+  { name: 'CBS New York', scope: 'general', outlet: 'CBS New York', owner: 'Paramount / CBS', metro: 'New York', url: 'https://www.cbsnews.com/newyork/latest/rss/main', coverage: 'full-text', coverageReason: 'robots.txt blocks only GPTBot; same host and terms as the national CBS feed; general local news' },
+  { name: 'THE CITY', scope: 'general', outlet: 'THE CITY', owner: 'THE CITY (nonprofit)', metro: 'New York', url: 'https://www.thecity.nyc/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows ClaudeBot, Claude-User, Claude-SearchBot' },
+  { name: 'amNY', scope: 'general', outlet: 'amNY', owner: 'Schneps Media', metro: 'New York', url: 'https://www.amny.com/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows anthropic-ai and ClaudeBot' },
+  // Kansas City
+  { ...bizj('Kansas City', 'kansascity'), metro: 'Kansas City' },
+  { name: 'KCUR Business', scope: 'business', outlet: 'KCUR', owner: 'University of Missouri-Kansas City / NPR', metro: 'Kansas City', url: 'https://www.kcur.org/tags/business.rss', coverage: 'full-text', coverageReason: 'robots.txt allows all; NPR terms bar scraping to republish and AI training, neither of which this is' },
+  { name: 'KSHB 41 Money', scope: 'business', outlet: 'KSHB 41', owner: 'E.W. Scripps', metro: 'Kansas City', url: 'https://www.kshb.com/money.rss', coverage: 'full-text', coverageReason: 'robots.txt blocks only training crawlers (GPTBot, Google-Extended); no RSS restriction' },
+  { name: 'Flatland', scope: 'general', outlet: 'Flatland', owner: 'Kansas City PBS', metro: 'Kansas City', url: 'https://flatlandkc.org/feed/', coverage: 'full-text', coverageReason: 'robots.txt allows all; terms page unreadable (embed)' },
+  { name: 'Startland News', scope: 'business', outlet: 'Startland News', owner: 'Startland (independent)', metro: 'Kansas City', url: 'https://www.startlandnews.com/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'terms bar any robot or automated access to the website' },
+];
+
+// Every feed carries a `scope`: 'business' or 'general' (shown on the
+// method page). National business feeds are listed here; the rest are general.
+const NATIONAL_BUSINESS = new Set(['CNBC', 'Fortune', 'Financial Times', 'WSJ (via Google News)']);
+export const FEED_SCOPES = ['business', 'general'];
+
+export const FEEDS = [
+  ...NATIONAL_FEEDS.map((f) => ({ ...f, pack: 'national', scope: NATIONAL_BUSINESS.has(f.name) ? 'business' : 'general' })),
+  ...REGIONAL_FEEDS.map((f) => ({ ...f, pack: 'regional', scope: f.scope || 'general' })),
+];
+
+export function feedsForPack(key) {
+  return FEEDS.filter((f) => (f.pack || DEFAULT_PACK) === key);
+}
+
+export function packOf(feedOrRow) {
+  return feedOrRow?.pack || DEFAULT_PACK;
+}
 
 // ---------------------------------------------------------------------------
 // Methodology v2 statistics (phase 2).

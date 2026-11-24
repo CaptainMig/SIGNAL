@@ -77,7 +77,7 @@ function table(data) {
     return `<tr>
       <td class="l" data-l="VERDICT">${verdict} ${src}</td>
       <td class="l title" data-l=""><a href="/article/${esc(r.id)}" data-link>${esc(r.title)}</a>${slam}</td>
-      <td class="l" data-l="OUTLET"><span class="muted">${esc(r.publication)}</span></td>
+      <td class="l" data-l="OUTLET"><span class="muted">${esc(r.publication)}${r.metro ? ` · ${esc(r.metro)}` : ''}</span></td>
       <td data-l="FIDELITY">${cell(f.fidelity)}</td>
       <td data-l="SENS">${cell(f.sens, true)}</td>
       <td data-l="CLICKBAIT">${cell(f.click, true)}</td>
