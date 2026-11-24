@@ -7,7 +7,10 @@
 //                                   HH.2.json rather than overwriting)
 //   data/history.csv                one row per run, columns frozen below,
 //                                   never rewritten
-//   data/latest.json                the most recent run, what the site reads
+//   data/pointer.json               the latest scan file and the file for
+//                                   every run id in the reuse window; the
+//                                   current view is built from these on
+//                                   demand (view.js) and never committed
 //   data/aggregate.json             the 24h aggregate (see aggregate.js)
 // ---------------------------------------------------------------------------
 import { promises as fs } from 'node:fs';
@@ -63,7 +66,7 @@ export function ledgerPaths(root = '.', dataDir = DATA_DIR, pack = DEFAULT_PACK)
     history: path.join(base, 'history.csv'),
     stats: path.join(base, 'stats.csv'),
     daily: path.join(base, 'daily.json'),
-    latest: path.join(base, 'latest.json'),
+    pointer: path.join(shared, 'pointer.json'),
     aggregate: path.join(base, 'aggregate.json'),
   };
 }
@@ -105,17 +108,6 @@ export async function writeScan(run, payload, { root = '.' } = {}) {
   }
   await fs.writeFile(target, JSON.stringify({ ...run, rows, carried }) + '\n');
   return target;
-}
-
-// The full current view, or null when no run has been written yet.
-export async function readLatest({ root = '.', pack = DEFAULT_PACK } = {}) {
-  const paths = ledgerPaths(root, DATA_DIR, pack);
-  try {
-    const parsed = JSON.parse(await fs.readFile(paths.latest, 'utf8'));
-    return parsed && Array.isArray(parsed.rows) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -196,11 +188,27 @@ export async function countHistoryRuns({ root = '.', pack = DEFAULT_PACK } = {})
   }
 }
 
-export async function writeLatest(run, rows, { root = '.', pack = DEFAULT_PACK } = {}) {
-  const paths = ledgerPaths(root, DATA_DIR, pack);
+// data/pointer.json: { latest: { id, startedAt, file }, runs: { id: file } },
+// files relative to the data directory. Rewritten every run; tiny.
+export async function writePointer(pointer, { root = '.' } = {}) {
+  const paths = ledgerPaths(root);
   await fs.mkdir(paths.base, { recursive: true });
-  await fs.writeFile(paths.latest, JSON.stringify({ ...run, rows }, null, 0) + '\n');
-  return paths.latest;
+  await fs.writeFile(paths.pointer, JSON.stringify(pointer, null, 2) + '\n');
+  return paths.pointer;
+}
+
+export async function readPointer({ root = '.' } = {}) {
+  try {
+    const p = JSON.parse(await fs.readFile(ledgerPaths(root).pointer, 'utf8'));
+    return p && p.latest && p.runs ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+// The scan file for a run, relative to the data directory.
+export function scanFileRelative(absPath, { root = '.' } = {}) {
+  return path.relative(ledgerPaths(root).base, absPath).split(path.sep).join('/');
 }
 
 export async function readDaily({ root = '.', pack = DEFAULT_PACK } = {}) {
@@ -247,7 +255,8 @@ export async function readRecentScans({ root = '.', now = Date.now(), windowMs =
       try {
         const run = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'));
         const t = Date.parse(run.startedAt);
-        if (Number.isFinite(t) && t >= since && t <= now) runs.push(run);
+        // `file` is where this run lives, relative to data/ (for pointer.json).
+        if (Number.isFinite(t) && t >= since && t <= now) runs.push({ ...run, file: `scans/${day}/${f}` });
       } catch {
         /* a corrupt file is skipped, never repaired in place */
       }

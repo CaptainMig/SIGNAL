@@ -35,7 +35,7 @@ shared (rows carry `pack` and `metro`).
 
 | Pack | Feeds | Files |
 |---|---|---|
-| `national` | the 24 national and international feeds | `data/history.csv`, `stats.csv`, `latest.json`, `aggregate.json`, `daily.json` |
+| `national` | the 24 national and international feeds | `data/history.csv`, `stats.csv`, `aggregate.json`, `daily.json` |
 | `regional` | 18 feeds across Washington DC, Baltimore, New York and Kansas City, each tagged business or general | `data/packs/regional/…` |
 
 Every feed is tagged with a `scope`, `business` or `general` (national
@@ -115,7 +115,7 @@ GitHub Actions, hourly          scripts/scan.js
                                                                               │
                                                       data/scans/YYYY-MM-DD/HH.json   every row + telemetry
                                                       data/history.csv                one row per run, append-only
-                                                      data/latest.json                what the site reads
+                                                      data/pointer.json               latest scan + window map; the view is built on demand
                                                       data/aggregate.json             24h aggregate for anthonycharts
 ```
 
@@ -270,11 +270,23 @@ dropped) and `dead` (any other failure). `feeds_blocked` is a column in
 
 ## Schema brief
 
-`docs/schema-brief.md` holds the ledger row baseline and the proposed
-additions (text fingerprint without text, publisher and first-observed
-timestamps with hourly-resolution tie rules, the no-new-fetch constraint,
-and the growth estimate with the point at which the repository stops being a
-sensible database). Proposals there are not implemented until approved.
+`docs/schema-brief.md` holds the ledger row baseline and the additions
+approved and implemented on 2026-11-24: a MinHash text fingerprint stored
+instead of any text (`fp`), the publisher's timestamp beside the
+first-observed time (`pubDate`, `timestampSource`, `firstSeen`,
+`firstSeenRun`, `pubDateChanged`, `pubDateFirst`) with the hourly-resolution
+tie rules, the no-new-fetch constraint, the limits of the fingerprint, and
+the growth estimate. No public metric is derived from these fields yet.
+
+## The current view is built, not committed
+
+`latest.json` is no longer written. Every run writes `data/pointer.json`
+(the latest scan file and the file for every run in the 48-hour window) and
+carries each pack's scorecards and metro cards inside its scan file as
+`views`. `/api/data?file=latest` assembles the current view from the latest
+scan plus the scans its carried references name, keeps it in the function
+instance while the pointer is unchanged, and serves it with a five-minute
+edge cache. Scripts use `currentViewFromDisk` from `pipeline/view.js`.
 
 ## Ledger row shape
 

@@ -65,9 +65,12 @@ publisher that disallows article fetching gets `thinBody: true`.
   that calls the model.
 - `scripts/scan.js` — the scheduled entry point; writes the ledger.
 - `data/` — the ledger: `scans/YYYY-MM-DD/HH.json` (deltas: telemetry plus
-  rows scored this run; carried rows referenced by `{ id, run }`),
-  `history.csv`, `latest.json` (full current view), `aggregate.json`.
-  Scan files never contain article text.
+  rows scored this run; carried rows referenced by `{ id, run }`; per-pack
+  `views`), `pointer.json` (latest scan and the window's files),
+  `history.csv`, `aggregate.json`. There is no committed current view: the
+  API builds it from the pointer and the scans (`pipeline/view.js`) and
+  caches it at the edge. Scan files never contain article text; they carry
+  a MinHash fingerprint (`fp`) instead (docs/schema-brief.md).
 - `test/` — `node --test` suites with fixed fixtures; every formula is tested.
 - `.github/workflows/scan.yml` — hourly scan; `test.yml` — CI.
 

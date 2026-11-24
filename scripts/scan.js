@@ -18,7 +18,7 @@
 import { promises as fs } from 'node:fs';
 import { runScan, REUSE_WINDOW_HOURS, tooSoon } from '../pipeline/run.js';
 import { createClient, createScorer } from '../pipeline/scorer.js';
-import { appendHistory, appendStats, countHistoryRuns, readDaily, readLatest, readRecentScans, resolveRuns, writeAggregate, writeDaily, writeLatest, writeScan } from '../pipeline/ledger.js';
+import { appendHistory, appendStats, countHistoryRuns, readDaily, readRecentScans, resolveRuns, scanFileRelative, writeAggregate, writeDaily, writePointer, writeScan } from '../pipeline/ledger.js';
 import { updateDaily } from '../pipeline/daily.js';
 import { refreshAgreement } from '../pipeline/validation.js';
 import { historyRecord, statsRecord } from '../pipeline/summarize.js';
@@ -159,16 +159,18 @@ async function main() {
   const now = Date.now();
   const reuseMs = REUSE_WINDOW_HOURS * 60 * 60 * 1000;
   const windowMs = Math.max(reuseMs, SCORECARD_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  // Scan files are deltas; resolve carried references against the window and
-  // the previous full view before carry-forward, scorecards and aggregation.
-  const previousLatest = await readLatest({ root });
-  if (!force && tooSoon(previousLatest, now, SCAN_MIN_GAP_MINUTES * 60_000)) {
-    const msg = `[signal] skipped: previous run ${previousLatest.id} started ${Math.round((now - Date.parse(previousLatest.startedAt)) / 60_000)} min ago (< ${SCAN_MIN_GAP_MINUTES}); nothing scored, nothing written. Pass --force to run anyway.`;
+  // Scan files are deltas; resolve carried references against the window
+  // before carry-forward, scorecards and aggregation. There is no committed
+  // current view: the newest scan in the window is the previous run.
+  const recent = await readRecentScans({ root, now, windowMs });
+  const window = resolveRuns(recent);
+  const previousRun = window[0] || null;
+  if (!force && tooSoon(previousRun, now, SCAN_MIN_GAP_MINUTES * 60_000)) {
+    const msg = `[signal] skipped: previous run ${previousRun.id} started ${Math.round((now - Date.parse(previousRun.startedAt)) / 60_000)} min ago (< ${SCAN_MIN_GAP_MINUTES}); nothing scored, nothing written. Pass --force to run anyway.`;
     log(msg);
     if (reportPath) await fs.writeFile(String(reportPath), `# Signal scan skipped\n\n${msg.replace('[signal] ', '')}\n`);
     return;
   }
-  const window = resolveRuns(await readRecentScans({ root, now, windowMs }), { latest: previousLatest });
   const priorRuns = window.filter((r) => Date.parse(r.startedAt) >= now - reuseMs);
 
   // Golden set: scored on the configured cadence; the baseline is written once.
@@ -184,8 +186,29 @@ async function main() {
 
   const { run, rows, delta, goldenReport } = await runScan({ scorer, priorRuns, limit, log, golden, runIndex });
 
+  // Per-pack views (scorecards, gated metros) travel in the scan file as
+  // `views`, computed from this run plus the window, so the current view can
+  // be assembled on demand without a committed latest.json.
+  const after = Date.now();
+  const allRuns = [{ ...run, rows }, ...window];
+  run.views = {};
+  for (const pack of PACKS) {
+    const key = pack.key;
+    if (!run.packs?.[key]) continue;
+    const windowRuns = allRuns.map((r) => packView(r, key)).filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3);
+    const scorecards = buildScorecards(windowRuns);
+    const metros = pack.metros?.length ? buildScorecards(windowRuns, { groupBy: 'metro' }) : undefined;
+    run.views[key] = { scorecards, ...(metros ? { metros } : {}) };
+  }
+
   const paths = [];
-  paths.push(await writeScan(run, delta, { root }));
+  const scanPath = await writeScan(run, delta, { root });
+  paths.push(scanPath);
+  // pointer.json: the latest scan file and every run in the reuse window.
+  const files = {};
+  for (const r of recent.filter((r) => Date.parse(r.startedAt) >= after - reuseMs).sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt))) files[r.id] = r.file;
+  files[run.id] = scanFileRelative(scanPath, { root });
+  paths.push(await writePointer({ latest: { id: run.id, startedAt: run.startedAt, file: files[run.id] }, runs: files }, { root }));
   for (const pack of PACKS) {
     const summary = run.packs?.[pack.key];
     if (!summary) continue;
@@ -197,24 +220,14 @@ async function main() {
     if (written) log('[signal] golden baseline written (first scoring run)');
   }
 
-  const after = Date.now();
-  const allRuns = resolveRuns(await readRecentScans({ root, now: after, windowMs }), { latest: { rows } });
-  // Per pack: scorecards, the full current view, the 24h aggregate and the
-  // daily tone summary, each from that pack's rows only.
+  // Per pack: the 24h aggregate and the daily tone summary, each from that
+  // pack's rows only. (The current view is built on demand from the scans.)
   for (const pack of PACKS) {
     const key = pack.key;
-    const summary = run.packs?.[key];
-    if (!summary) continue;
+    if (!run.packs?.[key]) continue;
     const packRuns = allRuns.map((r) => packView(r, key));
-    const packRows = rows.filter((r) => packOf(r) === key);
-    const windowRuns = packRuns.filter((r) => Date.parse(r.startedAt) >= after - SCORECARD_WINDOW_DAYS * 86400e3);
-    const scorecards = buildScorecards(windowRuns);
-    // Per-metro figures for packs with metros, gated like outlets (n ≥ 20
-    // text rows over ≥ 3 days); the pack-level numbers are the aggregate.
-    const metros = pack.metros?.length ? buildScorecards(windowRuns, { groupBy: 'metro' }) : undefined;
-    paths.push(await writeLatest({ ...run, pack: key, summary, scorecards, ...(metros ? { metros } : {}) }, packRows, { root, pack: key }));
-    const recent = packRuns.filter((r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000);
-    paths.push(await writeAggregate(computeAggregate(recent, { now: after }), { root, pack: key }));
+    const recentRuns = packRuns.filter((r) => Date.parse(r.startedAt) >= after - WINDOW_HOURS * 60 * 60 * 1000);
+    paths.push(await writeAggregate(computeAggregate(recentRuns, { now: after }), { root, pack: key }));
     paths.push(await writeDaily(updateDaily(await readDaily({ root, pack: key }), packRuns.filter((r) => Date.parse(r.startedAt) >= after - reuseMs), { now: after }), { root, pack: key }));
   }
   // Human validation agreement, from any labels files committed since.
