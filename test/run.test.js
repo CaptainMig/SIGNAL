@@ -69,7 +69,7 @@ test('a full run: rows, modes, escalation outcomes, finals, summary', async () =
   assert.ok(!serialized.includes('The Senate passed the budget bill 52'), 'feed summary must not be stored');
   assert.ok(!serialized.includes('late-night session that stretched'), 'extracted article text must not be stored');
   assert.ok(!serialized.includes('Subscribe to continue'), 'stub text must not be stored');
-  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction'];
+  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction', 'byline'];
   for (const r of rows) for (const k of Object.keys(r)) assert.ok(ALLOWED.includes(k), `unexpected row field ${k}`);
   const SCORE_KEYS = ['mode', 'verdict', 'fidelity', 'sens', 'click', 'rationale', 'provisional', 'model', 'promptHash', 'usage', 'latencyMs', 'at', 'chars', 'carriedFrom'];
   for (const r of rows) for (const s of [r.sweep, r.fulltext]) if (s) for (const k of Object.keys(s)) assert.ok(SCORE_KEYS.includes(k), `unexpected score field ${k}`);
@@ -319,4 +319,25 @@ test('tooSoon: a run within the minimum gap of the previous run is skipped unles
   assert.equal(tooSoon(null, t, gap), false);
   assert.equal(tooSoon({ startedAt: 'garbage' }, t, gap), false);
   assert.equal(tooSoon({ startedAt: '2026-11-24T01:09:00Z' }, t, 0), false);
+});
+
+test('rows carry a byline from the feed, or from the article page when the feed gave none, else none; coverage is summarized', async () => {
+  const item = (title, link, extra = '') => `<item><title>${title}</title><link>${link}</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>The mayor criticised the council at length.</description>${extra}</item>`;
+  const feed = `<rss><channel>${item('Mayor slams council over transit vote delay', 'https://example-d.com/news/one', '<dc:creator>By Jane Doe and John Roe</dc:creator>')}${item('Mayor slams critics over budget vote delay', 'https://example-d.com/news/two')}${item('Council approves a quiet budget without drama', 'https://example-d.com/news/three')}</channel></rss>`;
+  const page = (authors) => `<html><head><title>T</title><script type="application/ld+json">${JSON.stringify({ '@type': 'NewsArticle', author: authors, articleBody: 'The council voted late on Tuesday after a long session. '.repeat(20) })}</script></head><body></body></html>`;
+  const fetch = mockFetch({ 'https://feed-d/': { status: 200, body: feed }, 'https://example-d.com/news/one': { status: 200, body: page([{ name: 'Ignored Page Author' }]) }, 'https://example-d.com/news/two': { status: 200, body: page([{ name: 'Page Author' }]) } });
+  const scorer = createScorer({ client: model(), model: 'claude-sonnet-5-5', now });
+  const feeds = [{ name: 'D', outlet: 'Outlet D', owner: 'O', url: 'https://feed-d/' }];
+  const { rows, run } = await runScan({ scorer, fetch, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0 });
+  const one = rows.find((r) => r.link.endsWith('/one'));
+  const two = rows.find((r) => r.link.endsWith('/two'));
+  const three = rows.find((r) => r.link.endsWith('/three'));
+  assert.deepEqual([one.byline.source, one.byline.text], ['feed', 'Jane Doe, John Roe'], 'the feed byline wins over the page');
+  assert.equal(one.byline.authors[0].id.length, 12);
+  assert.deepEqual([two.byline.source, two.byline.text], ['article', 'Page Author'], 'filled from the fetched page');
+  assert.deepEqual(three.byline, { source: 'none', text: 'none', authors: [] });
+  const b = run.summary.bylines;
+  assert.deepEqual([b.rows, b.withByline, b.fromFeed, b.fromArticle], [3, 2, 1, 1]);
+  assert.equal(b.byOutlet['Outlet D'].pct, 66.7);
+  assert.ok(!JSON.stringify(rows).includes('The council voted late'), 'no article text in rows');
 });

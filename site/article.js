@@ -51,6 +51,7 @@ export function renderArticle(data, id) {
   return `<section class="panel full article">
     <a class="back" href="/headlines" data-link>← HEADLINES</a>
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${f.source === 'unscored' ? `<span class="pill" style="color:#8d939e;border-color:#8d939e66">UNSCORED</span>` : pill(meta, f.verdict)}<span class="mono muted" style="font-size:11px;letter-spacing:.1em">${sourceLabel}</span></div>
+    ${row.byline ? `<div class="note">BYLINE · ${esc(row.byline.text === 'none' ? 'NONE RECORDED' : row.byline.text)}${row.byline.source !== 'none' ? ` · FROM ${esc(row.byline.source.toUpperCase())}` : ''}</div>` : ''}
     <h1>${esc(row.title)}</h1>
     <div class="mono muted" style="font-size:11px">${esc(row.publication)} · ${esc(row.owner)} · ${row.undated ? 'undated' : `${fmt.age(row.pubDate)} ago`} · <a href="${esc(row.link)}" target="_blank" rel="noopener noreferrer">original article ↗</a></div>
     <div class="axes">${axis('FIDELITY', f.fidelity)}${axis('SENSATIONALISM', f.sens, true)}${axis('CLICKBAIT', f.click, true)}</div>
