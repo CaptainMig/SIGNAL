@@ -90,6 +90,8 @@ export function packsSection(meta) {
     return `<p><b>${esc(p.label)}</b> · ${own.length} feed${own.length === 1 ? '' : 's'}. ${esc(p.description || '')}</p>${metros}${rows}`;
   });
   return `<p>Every feed belongs to exactly one pack. Every number on this site is computed from one pack at a time: its own rows, its own history, its own outlets, its own tone map. Nothing is blended across packs. Headline-only feeds are scored for tone only (sensationalism and clickbait), never for fidelity or a verdict, because the publisher's robots.txt or feed terms rule out fetching the article.</p>${blocks.join('')}`;
+}
+
 // Byline coverage by outlet, from the latest run's summary. Coverage only:
 // no per-author metric is computed or shown anywhere.
 export function bylineSection(latest) {
