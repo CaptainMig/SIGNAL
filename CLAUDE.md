@@ -40,6 +40,16 @@ fix is itself a defect.
 - The ledger is append-only. Scan files are never rewritten; `history.csv`
   rows are never edited; a schema change is a new file, not a migration.
 
+## Feed packs
+
+Every feed has a `pack`; the original 24 are `national`. Every aggregate,
+history row, stats row, scorecard, daily summary and site view is computed
+per pack, never blended. National is the ledger at `data/`; other packs keep
+their derived files under `data/packs/<key>/` (scan files are shared; rows
+carry `pack` and `metro`). Adding a feed means reading its `robots.txt` and
+terms first and recording `coverage` and `coverageReason` on the feed; a
+publisher that disallows article fetching gets `thinBody: true`.
+
 ## Repository layout
 
 - `pipeline/` — the scan pipeline (feeds → dedupe → sweep → escalate →

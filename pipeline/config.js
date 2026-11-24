@@ -140,7 +140,7 @@ export const USER_AGENT =
 // text (Google News aggregation, paywalled teasers): those rows are scored for
 // tone only (sensationalism + clickbait) and never for fidelity.
 // Ported from the v1 feed list; Google News recoveries are labelled honestly.
-export const FEEDS = [
+const NATIONAL_FEEDS = [
   {
     name: 'AP (via Google News)',
     outlet: 'AP',
@@ -206,6 +206,79 @@ export const FEEDS = [
   // Paywalled: the feed carries a teaser, not the article. Tone only.
   { name: 'Financial Times', outlet: 'Financial Times', owner: 'Nikkei', url: 'https://www.ft.com/rss/home', thinBody: true },
 ];
+
+// ---------------------------------------------------------------------------
+// Feed packs. Every feed belongs to exactly one pack; every aggregate,
+// history row, stats row, scorecard, daily summary and site view is computed
+// per pack. Nothing is ever blended across packs. The national pack is the
+// original ledger (data/); every other pack keeps its own derived files
+// under data/packs/<key>/ (scan files are shared: rows carry `pack`).
+// ---------------------------------------------------------------------------
+export const PACKS = [
+  { key: 'national', label: 'NATIONAL', description: 'Twenty-four national and international outlets.' },
+  {
+    key: 'regional-business',
+    label: 'REGIONAL BUSINESS',
+    description: 'Local business coverage in four metros: the Business Journals headline feed plus open local sources per metro.',
+    metros: ['Washington DC', 'Baltimore', 'New York', 'Kansas City'],
+  },
+];
+export const DEFAULT_PACK = 'national';
+export const PACK_KEYS = PACKS.map((p) => p.key);
+
+// Regional business pack. Coverage per feed was set from the publisher's
+// robots.txt and terms (the review is in the feed-packs pull request and
+// README): `thinBody: true` is headline-only / tone mode, used where the
+// publisher names AI agents in robots.txt, restricts its RSS feed to
+// personal non-commercial use, bars automated access in its feed terms, or
+// refuses the fetch outright (the Business Journals, read through Google
+// News). `coverage` records the reason in one word for the method page.
+const bizj = (metro, slug) => ({
+  name: `${metro} Business Journal (via Google News)`,
+  outlet: `${metro} Business Journal`,
+  owner: 'American City Business Journals',
+  url: `https://news.google.com/rss/search?q=site:bizjournals.com/${slug}+when:2d&hl=en-US&gl=US&ceid=US:en`,
+  thinBody: true,
+  coverage: 'headline-only',
+  coverageReason: 'publisher refuses automated feed access; robots.txt names AI agents',
+});
+const REGIONAL_BUSINESS_FEEDS = [
+  // Washington DC
+  { ...bizj('Washington', 'washington'), metro: 'Washington DC' },
+  { name: 'WUSA9 Money', outlet: 'WUSA9', owner: 'TEGNA', metro: 'Washington DC', url: 'https://www.wusa9.com/feeds/syndication/rss/money', coverage: 'full-text', coverageReason: 'robots.txt allows; no AI-agent directive; no RSS restriction' },
+  { name: 'Technical.ly DC', outlet: 'Technical.ly', owner: 'Technically Media', metro: 'Washington DC', url: 'https://technical.ly/?s=&market=dc&feed=rss2', coverage: 'full-text', coverageReason: 'robots.txt allows; no AI-agent directive; no terms page found' },
+  { name: 'WAMU', outlet: 'WAMU', owner: 'American University / NPR', metro: 'Washington DC', url: 'https://wamu.org/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows anthropic-ai' },
+  // Baltimore
+  { ...bizj('Baltimore', 'baltimore'), metro: 'Baltimore' },
+  { name: 'WMAR-2 Money', outlet: 'WMAR-2', owner: 'E.W. Scripps', metro: 'Baltimore', url: 'https://www.wmar2news.com/money.rss', coverage: 'full-text', coverageReason: 'robots.txt blocks only training crawlers (GPTBot, Google-Extended); no RSS restriction' },
+  { name: 'CBS Baltimore', outlet: 'CBS Baltimore', owner: 'Paramount / CBS', metro: 'Baltimore', url: 'https://www.cbsnews.com/baltimore/latest/rss/main', coverage: 'full-text', coverageReason: 'robots.txt blocks only GPTBot; same host and terms as the national CBS feed; general local news, no business section feed' },
+  { name: 'WYPR', outlet: 'WYPR', owner: 'Baltimore Public Media / NPR', metro: 'Baltimore', url: 'https://www.wypr.org/news.rss', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows anthropic-ai and ClaudeBot' },
+  // New York
+  { ...bizj('New York', 'newyork'), metro: 'New York' },
+  { name: 'Gothamist', outlet: 'Gothamist', owner: 'New York Public Radio', metro: 'New York', url: 'https://gothamist.com/feed', thinBody: true, coverage: 'headline-only', coverageReason: 'feed terms: RSS for personal, non-commercial use only' },
+  { name: 'CBS New York', outlet: 'CBS New York', owner: 'Paramount / CBS', metro: 'New York', url: 'https://www.cbsnews.com/newyork/latest/rss/main', coverage: 'full-text', coverageReason: 'robots.txt blocks only GPTBot; same host and terms as the national CBS feed; general local news' },
+  { name: 'THE CITY', outlet: 'THE CITY', owner: 'THE CITY (nonprofit)', metro: 'New York', url: 'https://www.thecity.nyc/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows ClaudeBot, Claude-User, Claude-SearchBot' },
+  { name: 'amNY', outlet: 'amNY', owner: 'Schneps Media', metro: 'New York', url: 'https://www.amny.com/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'robots.txt disallows anthropic-ai and ClaudeBot' },
+  // Kansas City
+  { ...bizj('Kansas City', 'kansascity'), metro: 'Kansas City' },
+  { name: 'KCUR Business', outlet: 'KCUR', owner: 'University of Missouri-Kansas City / NPR', metro: 'Kansas City', url: 'https://www.kcur.org/tags/business.rss', coverage: 'full-text', coverageReason: 'robots.txt allows all; NPR terms bar scraping to republish and AI training, neither of which this is' },
+  { name: 'KSHB 41 Money', outlet: 'KSHB 41', owner: 'E.W. Scripps', metro: 'Kansas City', url: 'https://www.kshb.com/money.rss', coverage: 'full-text', coverageReason: 'robots.txt blocks only training crawlers (GPTBot, Google-Extended); no RSS restriction' },
+  { name: 'Flatland', outlet: 'Flatland', owner: 'Kansas City PBS', metro: 'Kansas City', url: 'https://flatlandkc.org/feed/', coverage: 'full-text', coverageReason: 'robots.txt allows all; terms page unreadable (embed)' },
+  { name: 'Startland News', outlet: 'Startland News', owner: 'Startland (independent)', metro: 'Kansas City', url: 'https://www.startlandnews.com/feed/', thinBody: true, coverage: 'headline-only', coverageReason: 'terms bar any robot or automated access to the website' },
+];
+
+export const FEEDS = [
+  ...NATIONAL_FEEDS.map((f) => ({ ...f, pack: 'national' })),
+  ...REGIONAL_BUSINESS_FEEDS.map((f) => ({ ...f, pack: 'regional-business' })),
+];
+
+export function feedsForPack(key) {
+  return FEEDS.filter((f) => (f.pack || DEFAULT_PACK) === key);
+}
+
+export function packOf(feedOrRow) {
+  return feedOrRow?.pack || DEFAULT_PACK;
+}
 
 // ---------------------------------------------------------------------------
 // Methodology v2 statistics (phase 2).

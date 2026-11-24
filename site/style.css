@@ -50,6 +50,10 @@ a:hover { color: var(--accent); }
 .chip.live { border-color: var(--accent); color: var(--accent); }
 .chip.warn { border-color: var(--gold); color: var(--gold); }
 .chip.bad { border-color: var(--red); color: var(--red); }
+.chip.packs { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; }
+.chip.packs button { font: inherit; letter-spacing: inherit; background: transparent; color: var(--muted); border: 0.5px solid var(--hair); padding: 3px 8px; min-height: 28px; cursor: pointer; }
+.chip.packs button.active { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+.chip.packs button:hover:not(.active) { color: var(--accent); border-color: var(--accent); }
 
 /* Staleness banner: the deck's first line when the scan has missed a slot */
 .banner.stale { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; line-height: 1.6; color: var(--gold); border: 0.5px solid var(--gold); padding: 12px 16px; }

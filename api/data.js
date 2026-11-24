@@ -1,5 +1,6 @@
-// GET /api/data?file=latest|history|aggregate — the ledger, read at runtime
-// from the repository. Read-only; there is no POST anywhere in this site.
+// GET /api/data?file=latest|history|aggregate[&pack=<key>] — the ledger, read
+// at runtime from the repository, one pack at a time. Read-only; there is no
+// POST anywhere in this site.
 import { ALLOWED, cors, readLedgerFile } from './_ledger.js';
 
 export default async function handler(req, res) {
@@ -10,7 +11,8 @@ export default async function handler(req, res) {
   const key = String(req.query?.file || '');
   if (!ALLOWED[key]) return res.status(404).json({ error: 'unknown file', allowed: Object.keys(ALLOWED) });
 
-  const out = await readLedgerFile(key);
+  const pack = String(req.query?.pack || '') || undefined;
+  const out = await readLedgerFile(key, { pack });
   if (!out.ok) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(out.status).json({ error: out.reason });

@@ -228,8 +228,8 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
 
 // Flatten a summary + run meta into the history.csv record (see ledger.js for
 // the frozen column order).
-export function historyRecord(run) {
-  const s = run.summary;
+export function historyRecord(run, summary = run.summary) {
+  const s = summary;
   const m = s.escalation.matrix || {};
   const cell = (sv, v) => m[sv]?.[v] ?? null;
   return {
@@ -307,8 +307,8 @@ export function historyRecord(run) {
 
 // The stats.csv record: methodology v2 statistics per run, a companion to
 // history.csv keyed by run_id (see ledger.js STATS_COLUMNS).
-export function statsRecord(run) {
-  const s = run.summary;
+export function statsRecord(run, summary = run.summary) {
+  const s = summary;
   const fi = s.framingIntegrity;
   const m = s.escalation.matrix || {};
   const cx = m.CONTEXTUAL || {};

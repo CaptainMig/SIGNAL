@@ -58,6 +58,8 @@ export function renderMethod(data) {
       ${validationSection(data)}
       <h2>THE SLAM FLAG</h2>
       <p>A deterministic lexicon match, not an AI score. Core verbs: ${meta.slam.core.map(esc).join(', ')}. Watch verbs (often literal, muted badge): ${meta.slam.watch.map(esc).join(', ')}. Literal uses such as "car slams into" and "fire guts building" are suppressed. It never changes a verdict.</p>
+      <h2>FEED PACKS</h2>
+      ${packsSection(meta)}
       <h2>FEEDS</h2>
       <div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">FEED</th><th class="l">HOST</th><th class="l">EVIDENCE</th></tr></thead><tbody>${feeds}</tbody></table></div>
       <h2>WHAT SIGNAL IS NOT</h2>
@@ -69,4 +71,21 @@ export function renderMethod(data) {
       <p class="muted" style="font-size:12px">NERVA is a decision-integrity framework developed by Starpoint LLC. Headlines remain © their respective publications. Article text is never stored; the ledger keeps only its length.</p>
     </div>
   </section>`;
+}
+
+// Packs: what each is, and for every feed outside the national pack, its
+// coverage and the robots.txt / terms reason behind it.
+export function packsSection(meta) {
+  const packs = meta?.packs || [];
+  if (!packs.length) return '<p>One pack: national.</p>';
+  const feeds = meta?.feeds || [];
+  const blocks = packs.map((p) => {
+    const own = feeds.filter((f) => (f.pack || 'national') === p.key);
+    const metros = p.metros?.length ? `<div class="note">METROS · ${esc(p.metros.join(' · '))}</div>` : '';
+    const rows = p.key === 'national' ? '' : `<div class="scrollbox"><table class="data" style="min-width:640px"><thead><tr><th class="l">METRO</th><th class="l">FEED</th><th class="l">COVERAGE</th><th class="l">WHY</th></tr></thead><tbody>${own
+      .map((f) => `<tr><td class="l muted">${esc(f.metro || '')}</td><td class="l">${esc(f.name)}</td><td class="l">${esc(String(f.coverage || (f.thinBody ? 'headline-only' : 'full-text')).toUpperCase())}</td><td class="l muted">${esc(f.coverageReason || '')}</td></tr>`)
+      .join('')}</tbody></table></div>`;
+    return `<p><b>${esc(p.label)}</b> · ${own.length} feed${own.length === 1 ? '' : 's'}. ${esc(p.description || '')}</p>${metros}${rows}`;
+  });
+  return `<p>Every feed belongs to exactly one pack. Every number on this site is computed from one pack at a time: its own rows, its own history, its own outlets, its own tone map. Nothing is blended across packs. Headline-only feeds are scored for tone only (sensationalism and clickbait), never for fidelity or a verdict, because the publisher's robots.txt or feed terms rule out fetching the article.</p>${blocks.join('')}`;
 }

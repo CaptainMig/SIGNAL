@@ -69,7 +69,7 @@ test('a full run: rows, modes, escalation outcomes, finals, summary', async () =
   assert.ok(!serialized.includes('The Senate passed the budget bill 52'), 'feed summary must not be stored');
   assert.ok(!serialized.includes('late-night session that stretched'), 'extracted article text must not be stored');
   assert.ok(!serialized.includes('Subscribe to continue'), 'stub text must not be stored');
-  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction'];
+  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction', 'pack', 'metro'];
   for (const r of rows) for (const k of Object.keys(r)) assert.ok(ALLOWED.includes(k), `unexpected row field ${k}`);
   const SCORE_KEYS = ['mode', 'verdict', 'fidelity', 'sens', 'click', 'rationale', 'provisional', 'model', 'promptHash', 'usage', 'latencyMs', 'at', 'chars', 'carriedFrom'];
   for (const r of rows) for (const s of [r.sweep, r.fulltext]) if (s) for (const k of Object.keys(s)) assert.ok(SCORE_KEYS.includes(k), `unexpected score field ${k}`);
@@ -319,4 +319,26 @@ test('tooSoon: a run within the minimum gap of the previous run is skipped unles
   assert.equal(tooSoon(null, t, gap), false);
   assert.equal(tooSoon({ startedAt: 'garbage' }, t, gap), false);
   assert.equal(tooSoon({ startedAt: '2026-11-24T01:09:00Z' }, t, 0), false);
+});
+
+test('packs: rows carry their feed pack and metro; each pack is summarized from its own rows and feeds only', async () => {
+  const feed = (title, link) => `<rss><channel><item><title>${title}</title><link>${link}</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate><description>A plain description of the story.</description></item></channel></rss>`;
+  const fetch = mockFetch({
+    'https://feed-nat/': { status: 200, body: feed('National headline that is long enough', 'https://nat.example/1') },
+    'https://feed-reg/': { status: 200, body: feed('Regional headline that is long enough', 'https://reg.example/1') },
+    'https://feed-reg2/': { status: 503, body: '' },
+  });
+  const feeds = [
+    { name: 'Nat', outlet: 'Nat', owner: 'O', url: 'https://feed-nat/', pack: 'national' },
+    { name: 'Reg', outlet: 'Reg', owner: 'O', url: 'https://feed-reg/', pack: 'regional-business', metro: 'Kansas City' },
+    { name: 'Reg2', outlet: 'Reg2', owner: 'O', url: 'https://feed-reg2/', pack: 'regional-business', metro: 'Baltimore' },
+  ];
+  const scorer = createScorer({ client: model(), model: 'claude-sonnet-5-5', now });
+  const { run, rows } = await runScan({ scorer, fetch, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0 });
+  assert.deepEqual(rows.map((r) => [r.pack, r.metro]), [['national', null], ['regional-business', 'Kansas City']]);
+  assert.deepEqual(Object.keys(run.packs).sort(), ['national', 'regional-business']);
+  assert.equal(run.summary, run.packs.national, 'the run summary is the national pack');
+  assert.deepEqual([run.packs.national.rows.total, run.packs.national.feeds.total, run.packs.national.feeds.live], [1, 1, 1]);
+  assert.deepEqual([run.packs['regional-business'].rows.total, run.packs['regional-business'].feeds.total, run.packs['regional-business'].feeds.dead], [1, 2, 1]);
+  assert.deepEqual(run.feeds.map((f) => f.pack), ['national', 'regional-business', 'regional-business']);
 });

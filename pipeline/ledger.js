@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR } from './config.js';
+import { DATA_DIR, DEFAULT_PACK } from './config.js';
 
 // Frozen for methodology v2. A column change is a new file (history-v3.csv),
 // never an edit to this one: appendHistory refuses to write under a header
@@ -50,11 +50,16 @@ export const STATS_COLUMNS = [
   'golden_scored', 'golden_agreement_pct', 'golden_expected_agreement_pct', 'golden_fidelity_drift', 'golden_sens_drift', 'golden_click_drift', 'golden_alert', 'golden_cost_usd',
 ];
 
-export function ledgerPaths(root = '.', dataDir = DATA_DIR) {
-  const base = path.join(root, dataDir);
+// Scan files are shared by every pack (rows carry `pack`); every derived
+// file is per pack. The national pack is the original ledger at data/;
+// every other pack lives under data/packs/<key>/.
+export function ledgerPaths(root = '.', dataDir = DATA_DIR, pack = DEFAULT_PACK) {
+  const shared = path.join(root, dataDir);
+  const base = !pack || pack === DEFAULT_PACK ? shared : path.join(shared, 'packs', pack);
   return {
     base,
-    scans: path.join(base, 'scans'),
+    pack: pack || DEFAULT_PACK,
+    scans: path.join(shared, 'scans'),
     history: path.join(base, 'history.csv'),
     stats: path.join(base, 'stats.csv'),
     daily: path.join(base, 'daily.json'),
@@ -103,8 +108,8 @@ export async function writeScan(run, payload, { root = '.' } = {}) {
 }
 
 // The full current view, or null when no run has been written yet.
-export async function readLatest({ root = '.' } = {}) {
-  const paths = ledgerPaths(root);
+export async function readLatest({ root = '.', pack = DEFAULT_PACK } = {}) {
+  const paths = ledgerPaths(root, DATA_DIR, pack);
   try {
     const parsed = JSON.parse(await fs.readFile(paths.latest, 'utf8'));
     return parsed && Array.isArray(parsed.rows) ? parsed : null;
@@ -172,50 +177,50 @@ async function appendCsv(file, columns, record, label) {
 }
 
 /** Append one run to history.csv (frozen HISTORY_COLUMNS). */
-export async function appendHistory(record, { root = '.' } = {}) {
-  return appendCsv(ledgerPaths(root).history, HISTORY_COLUMNS, record, 'history.csv');
+export async function appendHistory(record, { root = '.', pack = DEFAULT_PACK } = {}) {
+  return appendCsv(ledgerPaths(root, DATA_DIR, pack).history, HISTORY_COLUMNS, record, 'history.csv');
 }
 
 /** Append one run to stats.csv (frozen STATS_COLUMNS). */
-export async function appendStats(record, { root = '.' } = {}) {
-  return appendCsv(ledgerPaths(root).stats, STATS_COLUMNS, record, 'stats.csv');
+export async function appendStats(record, { root = '.', pack = DEFAULT_PACK } = {}) {
+  return appendCsv(ledgerPaths(root, DATA_DIR, pack).stats, STATS_COLUMNS, record, 'stats.csv');
 }
 
 // Number of runs already recorded in history.csv (data rows), or 0.
-export async function countHistoryRuns({ root = '.' } = {}) {
+export async function countHistoryRuns({ root = '.', pack = DEFAULT_PACK } = {}) {
   try {
-    const text = await fs.readFile(ledgerPaths(root).history, 'utf8');
+    const text = await fs.readFile(ledgerPaths(root, DATA_DIR, pack).history, 'utf8');
     return Math.max(0, text.split(/\r?\n/).filter((l) => l.trim().length).length - 1);
   } catch {
     return 0;
   }
 }
 
-export async function writeLatest(run, rows, { root = '.' } = {}) {
-  const paths = ledgerPaths(root);
+export async function writeLatest(run, rows, { root = '.', pack = DEFAULT_PACK } = {}) {
+  const paths = ledgerPaths(root, DATA_DIR, pack);
   await fs.mkdir(paths.base, { recursive: true });
   await fs.writeFile(paths.latest, JSON.stringify({ ...run, rows }, null, 0) + '\n');
   return paths.latest;
 }
 
-export async function readDaily({ root = '.' } = {}) {
+export async function readDaily({ root = '.', pack = DEFAULT_PACK } = {}) {
   try {
-    const d = JSON.parse(await fs.readFile(ledgerPaths(root).daily, 'utf8'));
+    const d = JSON.parse(await fs.readFile(ledgerPaths(root, DATA_DIR, pack).daily, 'utf8'));
     return d && Array.isArray(d.days) ? d : null;
   } catch {
     return null;
   }
 }
 
-export async function writeDaily(daily, { root = '.' } = {}) {
-  const paths = ledgerPaths(root);
+export async function writeDaily(daily, { root = '.', pack = DEFAULT_PACK } = {}) {
+  const paths = ledgerPaths(root, DATA_DIR, pack);
   await fs.mkdir(paths.base, { recursive: true });
   await fs.writeFile(paths.daily, JSON.stringify(daily) + '\n');
   return paths.daily;
 }
 
-export async function writeAggregate(aggregate, { root = '.' } = {}) {
-  const paths = ledgerPaths(root);
+export async function writeAggregate(aggregate, { root = '.', pack = DEFAULT_PACK } = {}) {
+  const paths = ledgerPaths(root, DATA_DIR, pack);
   await fs.mkdir(paths.base, { recursive: true });
   await fs.writeFile(paths.aggregate, JSON.stringify(aggregate, null, 2) + '\n');
   return paths.aggregate;
