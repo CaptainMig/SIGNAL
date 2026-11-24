@@ -74,3 +74,14 @@ export function windowSum(history, key, days, now = Date.now()) {
 export function windowRuns(history, days, now = Date.now()) {
   return (history || []).filter((r) => Date.parse(r.started_at) >= now - days * DAY);
 }
+
+// The ledger is stale when the latest run finished more than this long ago:
+// the hourly scan has missed at least one slot. The deck says so at the top.
+export const STALE_AFTER_MS = 2 * 3600e3;
+export function staleness(latest, now = Date.now()) {
+  const t = Date.parse(latest?.finishedAt || '');
+  if (!Number.isFinite(t)) return null;
+  const ageMs = now - t;
+  if (ageMs <= STALE_AFTER_MS) return null;
+  return { ageMs, ageMinutes: Math.round(ageMs / 60000), finishedAt: latest.finishedAt };
+}

@@ -12,7 +12,7 @@
 import { esc, fmt, pending, verdictColor, verdictLabel, panelHead, kv, groupBy, mean, sparkline } from './ui.js';
 import { renderTvSection, wireTv } from './tv.js';
 import { renderToneSection, wireTone } from './tone.js';
-import { changeSince, historySeries, latestAndPrevious, mergeStats, windowRuns, windowSum } from './metrics.js';
+import { changeSince, historySeries, latestAndPrevious, mergeStats, staleness, windowRuns, windowSum } from './metrics.js';
 
 const DAY = 86400e3;
 const DEFINITION = 'Share of assessable headlines classified as faithfully framed relative to available article text. Not a measure of factual truth.';
@@ -34,6 +34,7 @@ export function renderDeck(data) {
   const lp = latestAndPrevious(merged);
   const ctx = { ...data, merged, latestRow: lp.latest, previousRow: lp.previous };
   return [
+    staleBanner(latest),
     topTier(ctx),
     section('fi-detail', 'FRAMING INTEGRITY · DETAIL', 'VERDICT MIX · HISTORY · BALANCED', framingDetail(ctx)),
     section('run-detail', 'RUN HEALTH · DETAIL', esc(latest.id || ''), runHealthDetail(ctx)),
@@ -62,6 +63,17 @@ export function wireDeck(root, data) {
       root.querySelector('#history-chart').innerHTML = historyChart(merged, state.win, state.def);
     });
   }
+}
+
+// --- Staleness banner -------------------------------------------------------
+
+// Shown at the top of the deck when the latest run finished more than two
+// hours ago: the scan has missed at least one hourly slot and every number
+// below is from that older run.
+export function staleBanner(latest, now = Date.now()) {
+  const st = staleness(latest, now);
+  if (!st) return '';
+  return `<div class="banner stale" role="status" data-stale-banner>LEDGER STALE · LAST RUN FINISHED ${esc(fmt.age(latest.finishedAt, now).toUpperCase())} AGO (${esc(fmt.dateEt(latest.finishedAt))} ${esc(fmt.et(latest.finishedAt))}) · NO SCAN HAS WRITTEN SINCE · EVERY NUMBER BELOW IS FROM THAT RUN</div>`;
 }
 
 // --- Top tier ---------------------------------------------------------------
