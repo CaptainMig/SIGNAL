@@ -1,7 +1,7 @@
 // Article detail: one ledger row, read by id. Nothing is scored on demand
 // here; the row shows exactly what the scheduled run recorded, including why
 // a full-text verdict could not be earned.
-import { esc, fmt, pill, scoreColor, verdictLabel, panelHead, kv, pending } from './ui.js';
+import { unresolvedPill, esc, fmt, pill, scoreColor, verdictLabel, panelHead, kv, pending } from './ui.js';
 
 function v1(score, thin) {
   if (!score || score.sens == null || score.click == null) return null;
@@ -46,11 +46,11 @@ export function renderArticle(data, id) {
   } else if (f.source === 'tone') {
     fulltextState = `<div class="note">This feed delivers no article text, so fidelity and the verdict are not scored. Only the two tone axes are.</div>`;
   } else {
-    fulltextState = `<div class="note">Not flagged by the sweep, so not escalated. On-demand full-text scoring ${pending('PHASE 2')}.</div>`;
+    fulltextState = `<div class="note">Not flagged by the sweep, so not escalated. On-demand full-text scoring is not available.</div>`;
   }
   return `<section class="panel full article">
     <a class="back" href="/headlines" data-link>← HEADLINES</a>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${f.source === 'unscored' ? `<span class="pill" style="color:#8d939e;border-color:#8d939e66">UNSCORED</span>` : pill(meta, f.verdict)}<span class="mono muted" style="font-size:11px;letter-spacing:.1em">${sourceLabel}</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${f.source === 'unscored' ? `<span class="pill" style="color:#8d939e;border-color:#8d939e66">UNSCORED</span>` : f.unresolved ? unresolvedPill(f) : pill(meta, f.verdict)}<span class="mono muted" style="font-size:11px;letter-spacing:.1em">${f.unresolved ? `SWEEP SAID ${esc(verdictLabel(meta, f.verdict))} · NEVER CHECKED` : sourceLabel}</span></div>
     ${row.byline ? `<div class="note">BYLINE · ${esc(row.byline.text === 'none' ? 'NONE RECORDED' : row.byline.text)}${row.byline.source !== 'none' ? ` · FROM ${esc(row.byline.source.toUpperCase())}` : ''}</div>` : ''}
     <h1>${esc(row.title)}</h1>
     <div class="mono muted" style="font-size:11px">${esc(row.publication)} · ${esc(row.owner)} · ${row.undated ? 'undated' : `${fmt.age(row.pubDate)} ago`} · <a href="${esc(row.link)}" target="_blank" rel="noopener noreferrer">original article ↗</a></div>

@@ -64,7 +64,9 @@ test('per-metro scorecards: grouped by metro, gated at n ≥ minN text rows over
   for (let i = 0; i < 24; i++) rows.push(row(`kc${i}`, 'Kansas City', String(20 + (i % 4)).padStart(2, '0')));
   for (let i = 0; i < 5; i++) rows.push(row(`dc${i}`, 'Washington DC', '21'));
   rows.push({ ...row('x', null, '21'), metro: null });
-  const sc = buildScorecards([{ id: 'r', startedAt: '2026-11-23T18:00:00Z', rows }], { groupBy: 'metro', minN: 20, minDays: 3 });
+  // Four runs on four ET days, each carrying the rows of its day (scan days, not publication dates, count).
+  const runs = ['20', '21', '22', '23'].map((d) => ({ id: `r${d}`, startedAt: `2026-11-${d}T18:00:00Z`, rows: rows.filter((r) => r.pubDate?.startsWith(`2026-11-${d}`) || r.metro == null) })).reverse();
+  const sc = buildScorecards(runs, { groupBy: 'metro', minN: 20, minDays: 3 });
   assert.equal(sc.groupBy, 'metro');
   assert.deepEqual(sc.cards.map((c) => [c.metro, c.ranked, c.nText, c.days]), [['Kansas City', true, 24, 4], ['Washington DC', false, 5, 1]]);
   assert.equal(sc.cards[1].progress, '5 of 20 · 1 of 3 days');

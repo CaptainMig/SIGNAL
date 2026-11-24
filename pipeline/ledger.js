@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR, DEFAULT_PACK } from './config.js';
+import { DATA_DIR, DEFAULT_PACK, outletOf } from './config.js';
 
 // Frozen for methodology v2. A column change is a new file (history-v3.csv),
 // never an edit to this one: appendHistory refuses to write under a header
@@ -128,7 +128,9 @@ export function resolveRuns(runs, { latest = null } = {}) {
       if (row) rows.push(row);
       else unresolvedCarried++;
     }
-    return { ...run, rows, unresolvedCarried };
+    // The outlet key is applied at read time, so rows written before it
+    // existed group with their outlet (DEFECTS.md v2-42).
+    return { ...run, rows: rows.map((r) => (r.outlet ? r : { ...r, outlet: outletOf(r) })), unresolvedCarried };
   });
 }
 

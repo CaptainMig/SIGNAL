@@ -62,6 +62,13 @@ export function pill(meta, v) {
   return `<span class="pill" style="color:${c};border-color:${c}66;background:${c}1f">${esc(verdictLabel(meta, v))}</span>`;
 }
 
+// A flagged row whose article could never be fetched: shown as UNRESOLVED
+// with the reason, never left under the sweep's distortion flag.
+export function unresolvedPill(final) {
+  const why = final?.unresolvedReason === 'timeout' ? 'TIMEOUT' : final?.unresolvedReason === 'no_article' ? 'NO ARTICLE TEXT' : 'SOURCE BLOCKED';
+  return `<span class="pill" style="color:#c8971f;border-color:#c8971f66;background:#c8971f1f" title="The sweep flagged this headline but the article could not be fetched; it is out of both Framing Integrity numbers and counted beside them.">UNRESOLVED · ${why}</span>`;
+}
+
 export function panelHead(title, right = '') {
   return `<div class="panel-head"><span>${title}</span>${right ? `<span>${right}</span>` : ''}</div>`;
 }

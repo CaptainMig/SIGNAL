@@ -3,7 +3,7 @@
 // from the code that scores.
 import { cors } from './_ledger.js';
 import { DISPLAY_VERDICTS, INTEGRITY_VERDICTS, MODEL_VERDICTS, VERDICT_COLORS, VERDICT_DEFINITIONS, VERDICT_LABELS } from '../pipeline/verdicts.js';
-import { BODY_CHARS, DEFAULT_PACK, FEEDS, HEADLINES_PER_FEED, MAX_ITEM_AGE_HOURS, METHODOLOGY, MODEL, PACKS, PRICING, SCAN_MINUTE_UTC } from '../pipeline/config.js';
+import { BODY_CHARS, DEFAULT_PACK, EXTRACT_MAX_ATTEMPTS, FEEDS, HEADLINES_PER_FEED, MAX_ITEM_AGE_HOURS, METHODOLOGY, MODEL, PACKS, PRICING, SCAN_MINUTE_UTC } from '../pipeline/config.js';
 import { CORE, WATCH } from '../pipeline/slam.js';
 
 const META = {
@@ -14,6 +14,7 @@ const META = {
   headlinesPerFeed: HEADLINES_PER_FEED,
   maxItemAgeHours: MAX_ITEM_AGE_HOURS,
   scanMinuteUtc: SCAN_MINUTE_UTC,
+  extractMaxAttempts: EXTRACT_MAX_ATTEMPTS,
   verdicts: { model: MODEL_VERDICTS, display: DISPLAY_VERDICTS, integrity: INTEGRITY_VERDICTS, labels: VERDICT_LABELS, colors: VERDICT_COLORS, definitions: VERDICT_DEFINITIONS },
   packs: PACKS,
   defaultPack: DEFAULT_PACK,

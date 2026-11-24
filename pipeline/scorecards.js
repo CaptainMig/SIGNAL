@@ -10,8 +10,9 @@
 // for the raw rate. Both the strict and the broad definition are published.
 // ---------------------------------------------------------------------------
 import { SCORECARD_MIN_N, SCORECARD_WINDOW_DAYS, SHRINK_STRENGTH } from './config.js';
-import { countsForFI, framingIntegrity, groupByOutlet, isScored, meanOf } from './integrity.js';
+import { countsForFI, framingIntegrity, groupByOutlet, isScored, meanOf, outletKey } from './integrity.js';
 import { shrink, wilson } from './stats.js';
+import { dayOf } from './days.js';
 
 export const SCORECARD_MIN_DAYS = 3;
 
@@ -26,9 +27,23 @@ export function uniqueRows(runs) {
   return [...seen.values()];
 }
 
-function dayOf(row) {
-  const t = row.pubDate || row.runStartedAt;
-  return t ? String(t).slice(0, 10) : null;
+// Scan days per group key: the distinct ET days on which a run in the
+// window observed any row of that outlet (or metro). Publication dates are
+// the publisher's and can sit days apart inside one scan; ranking counts
+// days Signal actually scanned (DEFECTS.md v2-41).
+function scanDaysBy(runs, keyOf) {
+  const days = new Map();
+  for (const run of runs) {
+    const day = dayOf(run.startedAt);
+    if (!day) continue;
+    for (const row of run.rows || []) {
+      const k = keyOf(row);
+      if (k == null) continue;
+      if (!days.has(k)) days.set(k, new Set());
+      days.get(k).add(day);
+    }
+  }
+  return days;
 }
 
 // Rows grouped by metro (rows without one are skipped). Per-metro figures
@@ -48,11 +63,12 @@ export function buildScorecards(runs, { minN = SCORECARD_MIN_N, minDays = SCOREC
   const fiRows = rows.filter(countsForFI);
   const pooled = { strict: framingIntegrity(fiRows, 'strict'), broad: framingIntegrity(fiRows, 'broad') };
   const groups = groupBy === 'metro' ? groupByMetro(rows) : groupByOutlet(rows);
+  const scanDays = scanDaysBy(runs, groupBy === 'metro' ? (r) => r.metro || null : (r) => outletKey(r));
   const cards = [];
   for (const [outlet, group] of groups) {
     const scored = group.filter(isScored);
     const text = group.filter(countsForFI);
-    const days = new Set(text.map(dayOf).filter(Boolean));
+    const days = scanDays.get(outlet) || new Set();
     const ranked = text.length >= minN && days.size >= minDays;
     const strict = framingIntegrity(text, 'strict');
     const broad = framingIntegrity(text, 'broad');

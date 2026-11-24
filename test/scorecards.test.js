@@ -57,7 +57,7 @@ test('ranking needs n ≥ 20 with text AND ≥ 3 observation days; below that, p
   assert.equal(by.C.ranked, false);
   assert.equal(by.C.progress, '20 of 20 · 1 of 3 days');
   assert.equal(by.T.toneOnly, true);
-  assert.equal(by.T.progress, '0 of 20 · 0 of 3 days');
+  assert.equal(by.T.progress, '0 of 20 · 3 of 3 days');
   assert.equal(sc.cards[0].outlet, 'A', 'ranked outlets first');
 });
 
@@ -77,4 +77,27 @@ test('ranked cards carry raw range, Wilson bounds and shrunk rates for both defi
   assert.equal(a.broad.shrunkLow, 94.1);
   assert.equal(a.strict.shrunkLow, 85.3); // (20 + 20 × 0.919) / 45, pooled strict = 57/62
   assert.equal(a.sens, 2);
+});
+
+test('ranking days are the distinct ET days Signal scanned the outlet, not publication dates (DEFECTS.md v2-41)', () => {
+  // 25 text rows with publication dates on three different days, all observed in ONE run: one scan day, not ranked.
+  const days = ['2026-11-21', '2026-11-22', '2026-11-23'];
+  const rows = [];
+  for (let i = 0; i < 25; i++) rows.push(row('X', 'VERIFIED', days[i % 3]));
+  const one = buildScorecards([{ id: 'r', startedAt: '2026-11-23T12:00:00Z', rows }]);
+  const x = one.cards.find((c) => c.outlet === 'X');
+  assert.deepEqual([x.nText, x.days, x.ranked, x.progress], [25, 1, false, '20 of 20 · 1 of 3 days']);
+  // The same rows seen across three runs on three ET days: ranked.
+  const three = buildScorecards([
+    { id: 'r3', startedAt: '2026-11-23T12:00:00Z', rows },
+    { id: 'r2', startedAt: '2026-11-22T12:00:00Z', rows },
+    { id: 'r1', startedAt: '2026-11-21T12:00:00Z', rows },
+  ]);
+  assert.deepEqual([three.cards[0].days, three.cards[0].ranked], [3, true]);
+  // Two runs on the same ET day (04:00Z and 23:00Z on Nov 23 are 23:00 ET Nov 22 and 18:00 ET Nov 23): two days.
+  const sameUtcDay = buildScorecards([
+    { id: 'a', startedAt: '2026-11-23T04:00:00Z', rows },
+    { id: 'b', startedAt: '2026-11-23T23:00:00Z', rows },
+  ]);
+  assert.equal(sameUtcDay.cards[0].days, 2);
 });

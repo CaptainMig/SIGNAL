@@ -145,6 +145,9 @@ body:has(.tv-dock:not([hidden])) .wrap { padding-bottom: 300px; }
 /* Charts */
 .chart { width: 100%; display: block; }
 .axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tone-plot { display: flex; gap: 6px; align-items: stretch; min-width: 0; }
+.axis.vertical { flex-direction: column; align-items: center; justify-content: space-between; width: 18px; padding-bottom: 18px; }
+.axis.vertical .label { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.1em; white-space: nowrap; }
 .toggle { display: inline-flex; gap: 0; }
 .toggle button { background: none; border: 0; color: var(--muted); font: inherit; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; padding: 0 4px; cursor: pointer; }
 .toggle button.active { color: var(--text); }

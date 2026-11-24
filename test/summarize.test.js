@@ -62,7 +62,7 @@ test('summarizeRun: rows, verdicts, both FI definitions, matrix, audit, extracti
   assert.equal(e.matrix.CONTESTED.unresolved, 1);
   assert.equal(e.matrix.CONTEXTUAL.VERIFIED, 1);
 
-  assert.deepEqual(s.audit, { sampledThisRun: 1, present: 1, scored: 1, changed: 1, overturned: 1, overturnPct: 100, changedPct: 100 });
+  assert.deepEqual(s.audit, { sampledThisRun: 1, present: 1, fetched: 1, scored: 1, changed: 1, overturned: 1, overturnPct: 100, changedPct: 100 });
   assert.equal(s.extraction.successPct, 75);
   assert.equal(s.extraction.byOutlet.B.successPct, 66.7);
   assert.equal(s.slam.test.underpowered, true);

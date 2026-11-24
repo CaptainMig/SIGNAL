@@ -67,8 +67,16 @@ export function historySeries(merged, win, def = 'broad', now = Date.now()) {
 }
 
 // Sum of a column over the runs in a window.
+// Sums a column over the window. A merged row carries its stats.csv columns
+// under `stats`, so a key that lives only there is read from there
+// (DEFECTS.md v2-49).
 export function windowSum(history, key, days, now = Date.now()) {
-  return (history || []).filter((r) => Date.parse(r.started_at) >= now - days * DAY).reduce((a, r) => a + (r[key] || 0), 0);
+  const val = (r) => {
+    const v = r[key] !== undefined && r[key] !== '' ? r[key] : r.stats?.[key];
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return (history || []).filter((r) => Date.parse(r.started_at) >= now - days * DAY).reduce((a, r) => a + val(r), 0);
 }
 
 export function windowRuns(history, days, now = Date.now()) {

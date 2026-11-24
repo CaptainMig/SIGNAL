@@ -45,8 +45,13 @@ export function renderToneSection(data) {
       <label class="mono muted" style="font-size:11px;letter-spacing:.1em;display:flex;align-items:center;gap:8px;flex:1 1 220px">DAY <input type="range" data-tone-scrub min="0" max="0" value="0" style="flex:1"></label>
       <span class="toggle"><button type="button" data-tone-trail class="active">TONE TRAIL · ${TRAIL_DAYS}D</button></span>
     </div>
-    <svg class="tone-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tone map for the selected day with the 30-day tone trail" data-tone-svg></svg>
-    <div class="axis"><span>0</span><span>SENSATIONALISM →</span><span>10</span></div>
+    <div class="tone-plot">
+      <div class="axis vertical"><span>10</span><span class="label">CLICKBAIT ↑</span><span>0</span></div>
+      <div style="flex:1;min-width:0">
+        <svg class="tone-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tone map for the selected day with the 30-day tone trail: sensationalism across, clickbait up" data-tone-svg></svg>
+        <div class="axis"><span>0</span><span>SENSATIONALISM →</span><span>10</span></div>
+      </div>
+    </div>
     <div class="note" data-tone-legend></div>
     <div class="tone-outlets filters" data-tone-outlets></div>
     <div class="tone-list" data-tone-list></div>
@@ -67,7 +72,11 @@ export function wireTone(root, data) {
   const trailBtn = host.querySelector('[data-tone-trail]');
   const eligible = eligibleOutlets(daily);
   const starred = watchlist();
-  const state = { index: days.length - 1, trail: true, overlay: new Set([...starred].filter((o) => eligible.some((e) => e.outlet === o))), selected: null };
+  // Open on the latest day that holds a scan's rows (days are scan days in
+  // ET; a day with no scored rows is skipped).
+  let start = days.length - 1;
+  while (start > 0 && !(days[start].n > 0)) start--;
+  const state = { index: start, trail: true, overlay: new Set([...starred].filter((o) => eligible.some((e) => e.outlet === o))), selected: null };
   scrub.max = String(Math.max(0, days.length - 1));
   scrub.value = String(state.index);
 

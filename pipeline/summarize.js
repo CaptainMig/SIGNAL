@@ -75,7 +75,7 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
     bySweep: Object.fromEntries(SWEEP_FLAGS.map((s) => [s, Object.fromEntries(OUTCOMES.map((o) => [o, 0]))])),
     matrix: emptyMatrix(),
   };
-  const audit = { sampledThisRun: auditSampled, present: 0, scored: 0, changed: 0, overturned: 0, overturnPct: null, changedPct: null };
+  const audit = { sampledThisRun: auditSampled, present: 0, fetched: 0, scored: 0, changed: 0, overturned: 0, overturnPct: null, changedPct: null };
 
   const v1 = [];
   const v2 = [];
@@ -138,6 +138,7 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
     }
     if (r.audit) {
       audit.present++;
+      if (r.fulltext || r.extraction?.route) audit.fetched++;
       if (r.auditOutcome?.scored) {
         audit.scored++;
         if (r.auditOutcome.changed) audit.changed++;
