@@ -60,10 +60,16 @@ fix is itself a defect.
    v2-5 to v2-21), landing as a few merged PRs: pipeline math and ledger,
    then the site panels and mobile tiers, then the human validation set.
 3. Telemetry deck + headline table + article detail (merged, ahead of 2).
-4. Cutover, only on the operator's say-so: domain, anthonycharts generator
-   URL, archive old `signal/`, Open Graph tags with a 1200×630 share image
-   titled "Signal — Media Integrity Scanner" so link previews render the
-   new deck.
+4. Cutover (authorized 2026-11-24): Open Graph tags and the 1200×630 share
+   image `site/og.png` titled "Signal — Media Integrity Scanner" are in,
+   with `https://anthony-signal.vercel.app` as the canonical URL; the
+   anthonycharts generator already reads that URL's `/api/aggregate`, whose
+   shape v2 preserves; the old `anthony-charts/signal/` app is archived
+   with a README pointer. The domain move itself (the `anthony-signal`
+   Vercel domain from the old project to this repo's project) is an
+   operator action in the Vercel dashboard; until it is done the old app
+   keeps serving so nothing breaks. The share image is regenerated from the
+   design system, never hand-edited: see the `site/og.png` note in README.
 
 ## Done after phase 2
 

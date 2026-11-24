@@ -3,7 +3,13 @@
 **A media-integrity scanner that scores how faithfully a headline represents
 its own article, not whether the news is true.**
 
-Owner: Starpoint LLC. Live at anthony-signal.vercel.app (after the phase 4 cutover).
+Owner: Starpoint LLC. Live at [anthony-signal.vercel.app](https://anthony-signal.vercel.app).
+The v1 app that previously served that address lives, archived, in
+`anthony-charts/signal/`.
+
+Link previews use `site/og.png` (1200×630, "Signal — Media Integrity
+Scanner"), rendered from `scripts/og/template.html` with
+`node scripts/og/render.js`; the PNG is never hand-edited.
 
 ## The one idea that matters
 
