@@ -30,10 +30,21 @@ function safeHost(url) {
   }
 }
 
+// Which build is answering: Vercel's system variables name the commit, so a
+// deployment that lags main is visible from the site itself.
+export function deploymentInfo(env = process.env) {
+  return {
+    commit: env.VERCEL_GIT_COMMIT_SHA || null,
+    ref: env.VERCEL_GIT_COMMIT_REF || null,
+    message: env.VERCEL_GIT_COMMIT_MESSAGE ? String(env.VERCEL_GIT_COMMIT_MESSAGE).split('\n')[0].slice(0, 120) : null,
+    env: env.VERCEL_ENV || 'local',
+  };
+}
+
 export default function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
-  return res.status(200).json(META);
+  return res.status(200).json({ ...META, deployment: deploymentInfo() });
 }

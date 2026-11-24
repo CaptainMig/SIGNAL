@@ -9,7 +9,9 @@ async function getJson(url) {
   if (!r.ok) {
     let reason = `HTTP ${r.status}`;
     try {
-      reason = (await r.json()).error || reason;
+      const j = await r.json();
+      reason = j.error || reason;
+      if (j.upstream && !reason.includes(j.upstream)) reason += ` (${j.upstream})`;
     } catch {
       /* keep status */
     }

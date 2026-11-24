@@ -54,27 +54,34 @@ export function packPath(key, pack) {
 
 // One ledger path, relative to data/, from disk (SIGNAL_DATA_LOCAL) or the
 // repository. Never throws.
-export async function readDataPath(file, { env = process.env, fetch = globalThis.fetch } = {}) {
+export async function readDataPath(file, { env = process.env, fetch = globalThis.fetch, fresh = false } = {}) {
   if (env.SIGNAL_DATA_LOCAL) {
+    const local = path.join(env.SIGNAL_DATA_DIR || 'data', file);
     try {
-      return { ok: true, body: await fs.readFile(path.join(env.SIGNAL_DATA_DIR || 'data', file), 'utf8'), source: 'local' };
+      return { ok: true, body: await fs.readFile(local, 'utf8'), source: 'local' };
     } catch (e) {
-      return { ok: false, status: 404, reason: e?.message || 'not found' };
+      return { ok: false, status: e?.code === 'ENOENT' ? 404 : 502, reason: `data/${file}: ${e?.code === 'ENOENT' ? 'not found on disk' : e?.message || 'read error'}`, path: `data/${file}`, upstream: local };
     }
   }
   const { owner, repo, ref } = repoCoordinates(env);
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/data/${file}`;
+  // pointer.json changes every run and the raw CDN holds a copy (and a
+  // miss) for up to five minutes: a per-minute query string keeps a pack's
+  // first run from hiding behind a cached 404 (DEFECTS.md v2-50). Scan
+  // files are append-only and named by the pointer, so they cache freely.
+  const bust = fresh ? `?t=${Math.floor(Date.now() / 60_000)}` : '';
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/data/${file}${bust}`;
   const headers = { 'User-Agent': 'signal-site', Accept: '*/*' };
   if (env.GITHUB_TOKEN) headers.Authorization = `token ${env.GITHUB_TOKEN}`;
   try {
     const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
     if (!r.ok) {
-      const reason = r.status === 404 && !env.GITHUB_TOKEN ? 'not found (a private repository needs GITHUB_TOKEN in the Vercel environment)' : `upstream HTTP ${r.status}`;
-      return { ok: false, status: r.status === 404 ? 404 : 502, reason };
+      // The real reason and the path that failed; nothing is guessed about
+      // the repository's visibility.
+      return { ok: false, status: r.status === 404 ? 404 : 502, reason: `data/${file}: upstream HTTP ${r.status}`, path: `data/${file}`, upstream: url.replace(/\?t=\d+$/, '') };
     }
     return { ok: true, body: await r.text(), source: 'github' };
   } catch (e) {
-    return { ok: false, status: 504, reason: e?.name === 'TimeoutError' ? 'upstream timeout' : e?.message || 'fetch failed' };
+    return { ok: false, status: 504, reason: `data/${file}: ${e?.name === 'TimeoutError' ? 'upstream timeout' : e?.message || 'fetch failed'}`, path: `data/${file}`, upstream: url.replace(/\?t=\d+$/, '') };
   }
 }
 
@@ -84,8 +91,8 @@ export async function readDataPath(file, { env = process.env, fetch = globalThis
 const viewCache = new Map();
 export async function buildLatestView({ env = process.env, fetch = globalThis.fetch, pack = DEFAULT_PACK } = {}) {
   if (!PACK_KEYS.includes(pack)) return { ok: false, status: 404, reason: 'unknown pack' };
-  const p = await readDataPath('pointer.json', { env, fetch });
-  if (!p.ok) return p.status === 404 ? { ok: false, status: 404, reason: 'no run recorded yet' } : p;
+  const p = await readDataPath('pointer.json', { env, fetch, fresh: true });
+  if (!p.ok) return p.status === 404 ? { ...p, reason: `no run recorded yet (${p.reason})` } : p;
   let pointer;
   try {
     pointer = JSON.parse(p.body);
@@ -101,8 +108,19 @@ export async function buildLatestView({ env = process.env, fetch = globalThis.fe
     if (!files.has(file)) files.set(file, readDataPath(file, { env, fetch }).then((r) => (r.ok ? JSON.parse(r.body) : null)).catch(() => null));
     return files.get(file);
   };
-  const run = await readRun(pointer.latest.file);
-  if (!run) return { ok: false, status: 502, reason: 'latest scan unreadable' };
+  const latest = await readDataPath(pointer.latest.file, { env, fetch });
+  if (!latest.ok) return { ...latest, status: 502, reason: `latest scan unreadable: ${latest.reason}` };
+  let run;
+  try {
+    run = JSON.parse(latest.body);
+  } catch {
+    return { ok: false, status: 502, reason: `latest scan unparseable: data/${pointer.latest.file}`, path: `data/${pointer.latest.file}` };
+  }
+  files.set(pointer.latest.file, Promise.resolve(run));
+  // A pack that has not been scanned yet has no summary in the latest run:
+  // say so, with a status the site reads as "no run recorded yet for this
+  // pack", and never cache it (DEFECTS.md v2-50).
+  if (run.packs && !run.packs[pack]) return { ok: false, status: 404, reason: `no run recorded yet for pack ${pack}`, path: `data/${pointer.latest.file}` };
   const view = await buildCurrentView({ run, loadRun: (id) => (pointer.runs?.[id] ? readRun(pointer.runs[id]) : Promise.resolve(null)), pack });
   const out = { ok: true, body: JSON.stringify(view), type: ALLOWED.latest.type, source: p.source, built: true };
   viewCache.clear();
