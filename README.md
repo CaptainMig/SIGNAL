@@ -11,6 +11,17 @@ Link previews use `site/og.png` (1200×630, "Signal — Media Integrity
 Scanner"), rendered from `scripts/og/template.html` with
 `node scripts/og/render.js`; the PNG is never hand-edited.
 
+## Bylines
+
+Every row carries `byline`: the author name(s) from the feed (`dc:creator`,
+`author`, Atom `<author><name>`) or, when the article was fetched and the
+feed gave none, the page's JSON-LD `author`, normalized ("By", emails and
+outlet suffixes stripped; split on commas and "and"; all-caps title-cased),
+each with a stable id per outlet (`sha256(outlet + normalized name)`,
+12 hex). `source` is `feed`, `article` or `none`; `text` is `none` when
+absent. The method page reports coverage by outlet. No per-author metric is
+computed or displayed.
+
 ## The one idea that matters
 
 The article is the source of record. Signal never fact-checks the world. Each

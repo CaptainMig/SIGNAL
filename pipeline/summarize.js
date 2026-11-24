@@ -43,6 +43,9 @@ function fiBlock(rows, definition, seed) {
   };
 }
 
+
+import { bylineCoverage } from './bylines.js';
+
 export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, golden = null, auditSampled = 0 }) {
   const feedCounts = { total: feeds.length, live: 0, stale: 0, blocked: 0, dead: 0 };
   for (const f of feeds) feedCounts[f.status] = (feedCounts[f.status] || 0) + 1;
@@ -220,6 +223,8 @@ export function summarizeRun({ rows, feeds, runId = 'run', extraction = null, go
     escalation: esc,
     audit,
     extraction: extractionSummary,
+    // Byline coverage only: no per-author metric is computed anywhere.
+    bylines: bylineCoverage(rows),
     golden: goldenSummary,
     usage: { ...usage, calls },
     costUsd: costOf(usage),

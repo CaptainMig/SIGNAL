@@ -53,8 +53,24 @@ function linkOf(block) {
   return href ? decodeEntities(href[1]) : '';
 }
 
+// Author fields, every occurrence: RSS dc:creator / author (often
+// "email (Name)"), Atom <author><name>, iTunes author. Raw strings; the
+// byline module normalizes them.
+function authorsOf(block) {
+  const out = [];
+  for (const m of block.matchAll(/<dc:creator(?:\s[^>]*)?>([\s\S]*?)<\/dc:creator>/gi)) out.push(m[1]);
+  for (const m of block.matchAll(/<author(?:\s[^>]*)?>([\s\S]*?)<\/author>/gi)) {
+    const inner = m[1];
+    const name = inner.match(/<name(?:\s[^>]*)?>([\s\S]*?)<\/name>/i);
+    out.push(name ? name[1] : inner);
+  }
+  const itunes = tag(block, 'itunes:author');
+  if (itunes) out.push(itunes);
+  return out.map((a) => collapse(decodeEntities(stripTags(unCdata(a))))).filter(Boolean);
+}
+
 /**
- * Parse a feed document into [{ title, link, pubDate, summary }]. Returns
+ * Parse a feed document into [{ title, link, pubDate, summary, authors }]. Returns
  * every item in document order; the caller applies freshness, sanity, and
  * per-feed caps. Dates are returned as the raw string (or null) — the caller
  * decides what a parseable date is.
@@ -68,6 +84,7 @@ export function parseFeed(xml) {
       link: linkOf(b),
       pubDate: collapse(tag(b, 'pubDate') || tag(b, 'published') || tag(b, 'dc:date') || tag(b, 'updated')) || null,
       summary: cleanSummary(tag(b, 'description') || tag(b, 'content:encoded') || tag(b, 'summary') || tag(b, 'content')).slice(0, 2000),
+      authors: authorsOf(b),
     }))
     .filter((it) => it.title.length > 0);
 }

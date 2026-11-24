@@ -68,7 +68,14 @@ function paragraphs(container) {
 // JSON-LD on the page: article bodies, the types present, and whether the
 // publisher marks the article as not free (a paywall signal).
 export function readJsonLd(html) {
-  const out = { bodies: [], types: new Set(), accessibleForFree: null };
+  const out = { bodies: [], types: new Set(), accessibleForFree: null, authors: [] };
+  const names = (a) => {
+    if (!a) return [];
+    if (typeof a === 'string') return [a];
+    if (Array.isArray(a)) return a.flatMap(names);
+    if (typeof a === 'object' && typeof a.name === 'string') return [a.name];
+    return [];
+  };
   const blocks = [...String(html || '').matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
   const visit = (node) => {
     if (!node || typeof node !== 'object') return;
@@ -77,6 +84,7 @@ export function readJsonLd(html) {
     if (typeof t === 'string') out.types.add(t);
     else if (Array.isArray(t)) t.forEach((x) => typeof x === 'string' && out.types.add(x));
     if (typeof node.articleBody === 'string') out.bodies.push(node.articleBody);
+    if (node.author && (typeof t === 'string' ? /Article|Posting|NewsArticle/.test(t) : true)) for (const n of names(node.author)) if (!out.authors.includes(n)) out.authors.push(n);
     if (node.isAccessibleForFree === false || node.isAccessibleForFree === 'False' || node.isAccessibleForFree === 'false') out.accessibleForFree = false;
     else if (node.isAccessibleForFree === true && out.accessibleForFree == null) out.accessibleForFree = true;
     if (node['@graph']) visit(node['@graph']);
@@ -135,7 +143,7 @@ export function extractText(html, { maxChars = EXTRACT_MAX_CHARS } = {}) {
   const title = normalize(s.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '');
   const isArticle = ['NewsArticle', 'Article', 'ReportageNewsArticle', 'AnalysisNewsArticle', 'OpinionNewsArticle', 'LiveBlogPosting'].some((t) => ld.types.has(t));
   const video = ld.types.has('VideoObject') && !ld.bodies.length && (!isArticle || text.length < EXTRACT_MIN_CHARS);
-  return { text, title, source, video, paywalled: ld.accessibleForFree === false };
+  return { text, title, source, video, paywalled: ld.accessibleForFree === false, authors: ld.authors };
 }
 
 // A video page is known from its URL before any fetch: never attempted,
@@ -223,7 +231,7 @@ function classify(r, minChars) {
   if (r.status < 200 || r.status >= 300) return { ok: false, reason: 'error', detail: `HTTP ${r.status}`, httpStatus: r.status };
   if (r.readError) return { ok: false, reason: 'error', detail: r.readError, httpStatus: r.status };
   const ex = extractText(r.html);
-  if (ex.text.length >= minChars) return { ok: true, text: ex.text, chars: ex.text.length, title: ex.title, httpStatus: r.status, source: ex.source };
+  if (ex.text.length >= minChars) return { ok: true, text: ex.text, chars: ex.text.length, title: ex.title, httpStatus: r.status, source: ex.source, authors: ex.authors };
   if (ex.video) return { ok: false, reason: 'no_article', detail: 'video page', chars: ex.text.length, httpStatus: r.status };
   if (looksLikeConsentWall({ finalUrl: r.finalUrl, title: ex.title, chars: ex.text.length })) return { ok: false, reason: 'blocked', detail: 'consent wall', chars: ex.text.length, httpStatus: r.status, consent: true };
   // Stub — paywall teaser / shell. Honest failure, never a fragment.
@@ -318,7 +326,7 @@ export function createRemoteFetch({ url, token, fetch = globalThis.fetch, timeou
       if (!res.ok) return { ok: false, reason: 'error', detail: `remote route HTTP ${res.status}`, route: 'vercel', attempts: 0, ms: Date.now() - t0 };
       const body = await res.json();
       if (body && body.ok && typeof body.text === 'string' && body.text.length >= EXTRACT_MIN_CHARS) {
-        return { ok: true, text: body.text, chars: body.text.length, title: body.title || '', httpStatus: body.httpStatus ?? null, source: body.source || 'markup', route: 'vercel', attempts: body.attempts || 1, ms: Date.now() - t0 };
+        return { ok: true, text: body.text, chars: body.text.length, title: body.title || '', httpStatus: body.httpStatus ?? null, source: body.source || 'markup', authors: Array.isArray(body.authors) ? body.authors.filter((a) => typeof a === 'string').slice(0, 10) : [], route: 'vercel', attempts: body.attempts || 1, ms: Date.now() - t0 };
       }
       return { ok: false, reason: FAILURE_REASONS.includes(body?.reason) ? body.reason : 'error', detail: body?.detail || 'remote route returned nothing', chars: body?.chars ?? null, httpStatus: body?.httpStatus ?? null, route: 'vercel', attempts: body?.attempts || 1, ms: Date.now() - t0 };
     } catch (e) {

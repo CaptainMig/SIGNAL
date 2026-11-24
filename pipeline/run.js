@@ -23,6 +23,7 @@ import { EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, EXTRACT_TIMEOUT_MS, FEEDS, M
 import { collectHeadlines } from './feeds.js';
 import { detectSlam } from './slam.js';
 import { fetchArticle, isVideoUrl } from './extract.js';
+import { bylineOf } from './bylines.js';
 import { auditResult, auditSampleSize, escalationOutcome, escalationReason, pickAuditRows } from './escalate.js';
 import { summarizeRun } from './summarize.js';
 import { promptHash } from './prompt.js';
@@ -71,6 +72,8 @@ function reusable(entry, row, hashes, model) {
   }
   if (prior.audit) out.audit = true;
   if (prior.extraction && (out.fulltext || out.fulltextError)) out.extraction = prior.extraction;
+  // A byline read from the article page is kept with the carried score.
+  if (prior.byline?.source === 'article' && out.fulltext) out.byline = prior.byline;
   return out;
 }
 
@@ -171,9 +174,12 @@ export async function runScan({
 
   log(`[signal] run ${runIdFor(startedAt)} started (${dryRun ? 'dry run' : model})`);
   const collected = await collectHeadlines({ feeds, fetch, now: startedMs });
-  let rows = collected.rows.map((r) => ({
+  let rows = collected.rows.map(({ authors, ...r }) => ({
     ...r,
     slam: detectSlam(r.title),
+    // Byline from the feed; the article page's structured data fills it in
+    // when the article is fetched and the feed gave none.
+    byline: bylineOf({ outlet: feeds.find((f) => f.name === r.publication)?.outlet || r.publication, names: authors || [], source: 'feed' }),
     sweep: null,
     sweepError: null,
     fulltext: null,
@@ -199,6 +205,7 @@ export async function runScan({
     if (reuse?.fulltext) row.fulltext = reuse.fulltext;
     if (reuse?.fulltextError) row.fulltextError = reuse.fulltextError;
     if (reuse?.extraction) row.extraction = reuse.extraction;
+    if (reuse?.byline && row.byline.source === 'none') row.byline = reuse.byline;
     if (reuse?.audit) row.audit = true;
     if (reuse && (reuse.sweep || reuse.fulltext || reuse.fulltextError)) {
       row.writtenIn = entry.row.writtenIn || entry.runId;
@@ -291,6 +298,7 @@ export async function runScan({
     count(extraction.routes, ex.route);
     count(o.routes, ex.route);
     row.extraction = { route: ex.route, tried, fetches: ex.attempts || 1, ms: ex.ms ?? null, source: ex.source || 'markup' };
+    if (row.byline.source === 'none' && ex.authors?.length) row.byline = bylineOf({ outlet: row.outlet, names: ex.authors, source: 'article' });
     const res = await scorer.scoreOne({ headline: row.title, body: ex.text, mode: 'fulltext' });
     if (res.ok) row.fulltext = scoreRecord(res, 'fulltext', { chars: ex.chars });
     else row.fulltextError = { ...errorRecord(res, 'score'), chars: ex.chars, attempts: priorAttempts + 1 };

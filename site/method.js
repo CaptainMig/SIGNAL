@@ -1,7 +1,7 @@
 // Methodology. Verdict definitions and the feed list come from /api/meta,
 // which imports the pipeline's own config, so this page cannot drift from
 // the code that scores.
-import { esc, panelHead, verdictColor, verdictLabel } from './ui.js';
+import { esc, fmt, panelHead, pending, verdictColor, verdictLabel } from './ui.js';
 
 function kappaTable(meta, rows, { withAxes = false } = {}) {
   const verdicts = meta.verdicts.model;
@@ -12,7 +12,7 @@ function kappaTable(meta, rows, { withAxes = false } = {}) {
 
 function validationSection(data) {
   const v = data.validation;
-  const { meta } = data;
+  const { meta, latest } = data;
   if (!v) {
     return `<p class="gold">Not yet validated against human reviewers.</p><p>A blind labelling set of 100 headline + article pairs drawn from the ledger, stratified by model verdict, is drawn by the operator once the ledger has enough rows in every verdict. Reviewers label it on an unlisted page without seeing any score; labels are committed to the repository; agreement (Cohen's kappa, overall and per verdict) is reported here once at least two reviewers have finished.</p>`;
   }
@@ -27,7 +27,7 @@ function validationSection(data) {
 }
 
 export function renderMethod(data) {
-  const { meta } = data;
+  const { meta, latest } = data;
   const defs = meta.verdicts.display.concat(['UNSCORED']).map((v) => `<div class="def"><span class="sw" style="background:${verdictColor(meta, v) || '#8d939e'}"></span><div><div class="mono" style="font-size:11px;letter-spacing:.08em;color:${verdictColor(meta, v)}">${esc(verdictLabel(meta, v))}</div><div class="muted" style="font-size:14px">${esc(meta.verdicts.definitions[v] || '')}</div></div></div>`).join('');
   const feeds = meta.feeds.map((f) => `<tr><td class="l"><div class="name">${esc(f.name)}</div><div class="sub">${esc(f.owner)}</div></td><td class="l mono muted">${esc(f.host)}</td><td class="l">${f.thinBody ? '<span class="muted">HEADLINE ONLY · TONE</span>' : 'FEED SUMMARY · ESCALATES TO FULL TEXT'}</td></tr>`).join('');
   return `<section class="panel full">
@@ -58,6 +58,8 @@ export function renderMethod(data) {
       ${validationSection(data)}
       <h2>THE SLAM FLAG</h2>
       <p>A deterministic lexicon match, not an AI score. Core verbs: ${meta.slam.core.map(esc).join(', ')}. Watch verbs (often literal, muted badge): ${meta.slam.watch.map(esc).join(', ')}. Literal uses such as "car slams into" and "fire guts building" are suppressed. It never changes a verdict.</p>
+      <h2>BYLINES</h2>
+      ${bylineSection(latest)}
       <h2>FEEDS</h2>
       <div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">FEED</th><th class="l">HOST</th><th class="l">EVIDENCE</th></tr></thead><tbody>${feeds}</tbody></table></div>
       <h2>WHAT SIGNAL IS NOT</h2>
@@ -69,4 +71,15 @@ export function renderMethod(data) {
       <p class="muted" style="font-size:12px">NERVA is a decision-integrity framework developed by Starpoint LLC. Headlines remain © their respective publications. Article text is never stored; the ledger keeps only its length.</p>
     </div>
   </section>`;
+}
+
+// Byline coverage by outlet, from the latest run's summary. Coverage only:
+// no per-author metric is computed or shown anywhere.
+export function bylineSection(latest) {
+  const b = latest?.summary?.bylines;
+  if (!b) return `<p>Byline coverage ${pending('NEXT RUN')}. Every row records the author name(s) the feed gives (dc:creator, author) or the article page's structured data, normalized, with a stable author id per outlet; "none" when absent.</p>`;
+  const outlets = Object.entries(b.byOutlet || {}).sort((x, y) => y[1].rows - x[1].rows || (x[0] < y[0] ? -1 : 1));
+  const rows = outlets.map(([o, v]) => `<tr><td class="l">${esc(o)}</td><td>${v.withByline}/${v.rows}</td><td>${fmt.pct(v.pct)}</td><td class="muted">${v.fromFeed}</td><td class="muted">${v.fromArticle}</td></tr>`).join('');
+  return `<p>Every row records the author name(s) the feed gives (dc:creator, author, Atom author) or, when the article was fetched, the page's structured data, normalized, with a stable author id per outlet. A row with no byline records "none". This run: <b>${b.withByline} of ${b.rows}</b> rows carry a byline (${fmt.pct(b.pct)}), ${b.fromFeed} from the feed and ${b.fromArticle} from the article page. No per-author metric is computed or shown.</p>
+    <div class="scrollbox"><table class="data" style="min-width:520px"><thead><tr><th class="l">OUTLET</th><th>WITH BYLINE</th><th>COVERAGE</th><th>FEED</th><th>ARTICLE</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
