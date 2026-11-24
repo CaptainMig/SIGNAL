@@ -42,7 +42,8 @@ test('ledger access reads from disk locally and from the repository otherwise', 
 
   const anon = await readLedgerFile('history', { env: {}, fetch: async () => ({ ok: false, status: 404 }) });
   assert.deepEqual([anon.ok, anon.status], [false, 404]);
-  assert.match(anon.reason, /private repository needs GITHUB_TOKEN/);
+  assert.equal(anon.reason, 'data/history.csv: upstream HTTP 404', 'the real reason and the path, no guess about visibility');
+  assert.equal(anon.upstream, 'https://raw.githubusercontent.com/CaptainMig/SIGNAL/main/data/history.csv');
   assert.deepEqual(repoCoordinates({}), { owner: 'CaptainMig', repo: 'SIGNAL', ref: 'main' });
 });
 
@@ -136,7 +137,7 @@ test('the current view is assembled from pointer.json, the latest scan and the s
   const calls = [];
   const fetch = async (url) => {
     calls.push(url);
-    const key = url.replace(/^.*\/data\//, '');
+    const key = url.replace(/^.*\/data\//, '').replace(/\?t=\d+$/, '');
     return files[key] ? { ok: true, status: 200, text: async () => files[key] } : { ok: false, status: 404 };
   };
   const env = { VERCEL_GIT_REPO_OWNER: 'O', VERCEL_GIT_REPO_SLUG: 'R' };
@@ -154,6 +155,40 @@ test('the current view is assembled from pointer.json, the latest scan and the s
   const again = await buildLatestView({ env, fetch, pack: 'regional' });
   assert.match(again.source, /instance cache/);
   const missing = await buildLatestView({ env, fetch: async () => ({ ok: false, status: 404 }), pack: 'national' });
-  assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'no run recorded yet']);
+  assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'no run recorded yet (data/pointer.json: upstream HTTP 404)']);
   assert.deepEqual((await buildLatestView({ env, fetch, pack: 'nope' })).status, 404);
+});
+
+test('a pack with no prior runs: its first run appears on the next request, nothing cached in between (DEFECTS.md v2-50)', async () => {
+  const { buildLatestView, readDataPath } = await import('../api/_ledger.js');
+  const files = {
+    'pointer.json': JSON.stringify({ latest: { id: '2026-11-24T00', startedAt: '2026-11-24T00:00:00Z', file: 'scans/2026-11-24/00.json' }, runs: { '2026-11-24T00': 'scans/2026-11-24/00.json' } }),
+    'scans/2026-11-24/00.json': JSON.stringify({ id: '2026-11-24T00', startedAt: '2026-11-24T00:00:00Z', summary: { n: 'nat' }, packs: { national: { n: 'nat' } }, views: { national: { scorecards: { cards: [] } } }, rows: [{ id: 'a', pack: 'national' }], carried: [] }),
+  };
+  const urls = [];
+  const fetch = async (url) => {
+    urls.push(url);
+    const key = url.replace(/^.*\/data\//, '').replace(/\?t=\d+$/, '');
+    return files[key] ? { ok: true, status: 200, text: async () => files[key] } : { ok: false, status: 404 };
+  };
+  const env = { VERCEL_GIT_REPO_OWNER: 'O', VERCEL_GIT_REPO_SLUG: 'R' };
+  // Before the pack's first run: a 404 that names the reason, from the shared pointer and scan file.
+  const before = await buildLatestView({ env, fetch, pack: 'regional' });
+  assert.deepEqual([before.ok, before.status, before.reason], [false, 404, 'no run recorded yet for pack regional']);
+  assert.ok(urls.some((u) => /\/data\/pointer\.json\?t=\d+$/.test(u)), 'the pointer is read fresh, past the raw CDN copy');
+  assert.ok(!urls.some((u) => u.includes('packs/regional')), 'no per-pack pointer is ever looked for');
+  const nat = await buildLatestView({ env, fetch, pack: 'national' });
+  assert.equal(nat.ok, true);
+  // The pack's first run lands: new pointer, new shared scan file with the pack's rows and summary.
+  files['pointer.json'] = JSON.stringify({ latest: { id: '2026-11-24T01', startedAt: '2026-11-24T01:00:00Z', file: 'scans/2026-11-24/01.json' }, runs: { '2026-11-24T00': 'scans/2026-11-24/00.json', '2026-11-24T01': 'scans/2026-11-24/01.json' } });
+  files['scans/2026-11-24/01.json'] = JSON.stringify({ id: '2026-11-24T01', startedAt: '2026-11-24T01:00:00Z', summary: { n: 'nat' }, packs: { national: { n: 'nat' }, regional: { n: 'reg', rows: { total: 105 } } }, views: { national: { scorecards: { cards: [] } }, regional: { scorecards: { cards: [] }, metros: { cards: [] } } }, rows: Array.from({ length: 105 }, (_, i) => ({ id: `r${i}`, pack: 'regional' })), carried: [{ id: 'a', run: '2026-11-24T00' }] });
+  const after = await buildLatestView({ env, fetch, pack: 'regional' });
+  assert.equal(after.ok, true, 'the very next request succeeds');
+  const v = JSON.parse(after.body);
+  assert.deepEqual([v.pack, v.rows.length, v.summary.n, !!v.metros, v.unresolvedCarried], ['regional', 105, 'reg', true, 0]);
+  const natAfter = JSON.parse((await buildLatestView({ env, fetch, pack: 'national' })).body);
+  assert.deepEqual(natAfter.rows.map((r) => r.id), ['a'], 'the carried national row resolves from the shared scan file');
+  // Local reads name the path that failed too.
+  const missing = await readDataPath('packs/regional/latest.json', { env: { SIGNAL_DATA_LOCAL: '1', SIGNAL_DATA_DIR: 'data' } });
+  assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'data/packs/regional/latest.json: not found on disk']);
 });

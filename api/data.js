@@ -14,8 +14,11 @@ export default async function handler(req, res) {
   const pack = String(req.query?.pack || '') || undefined;
   const out = await readLedgerFile(key, { pack });
   if (!out.ok) {
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(out.status).json({ error: out.reason });
+    // A failure is never cached, at the edge or by the browser: a pack's
+    // first run must appear on the next request.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('CDN-Cache-Control', 'no-store');
+    return res.status(out.status).json({ error: out.reason, ...(out.path ? { path: out.path } : {}), ...(out.upstream ? { upstream: out.upstream } : {}) });
   }
   res.setHeader('Content-Type', out.type);
   // The ledger changes hourly; a short edge cache keeps the repository out
