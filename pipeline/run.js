@@ -19,10 +19,10 @@
 // whose scan file holds its full record (`writtenIn`). latest.json is always
 // the full current view.
 // ---------------------------------------------------------------------------
-import { EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS, GOLDEN_EVERY_N_RUNS } from './config.js';
+import { EXTRACT_CONCURRENCY, EXTRACT_MAX_ATTEMPTS, EXTRACT_TIMEOUT_MS, FEEDS, METHODOLOGY, MODEL, PRICING, THINKING, EFFORT, BODY_CHARS, GOLDEN_EVERY_N_RUNS } from './config.js';
 import { collectHeadlines } from './feeds.js';
 import { detectSlam } from './slam.js';
-import { fetchArticle } from './extract.js';
+import { fetchArticle, isVideoUrl } from './extract.js';
 import { auditResult, auditSampleSize, escalationOutcome, escalationReason, pickAuditRows } from './escalate.js';
 import { summarizeRun } from './summarize.js';
 import { promptHash } from './prompt.js';
@@ -61,7 +61,18 @@ function reusable(entry, row, hashes, model) {
     out.fulltextError = { ...prior.fulltextError, attempts: prior.fulltextError.attempts || 1, carriedFrom: prior.fulltextError.carriedFrom || entry.runId };
   }
   if (prior.audit) out.audit = true;
+  if (prior.extraction && (out.fulltext || out.fulltextError)) out.extraction = prior.extraction;
   return out;
+}
+
+// The Vercel-side route is worth a try when the runner's address was refused
+// or answered nothing; never for a server-truncated paywall teaser (the same
+// page from another address) or a video page (nothing to fetch).
+export function remoteWorthTrying(result) {
+  if (!result || result.ok) return false;
+  if (result.reason === 'no_article') return false;
+  if (result.reason === 'blocked' && result.detail === 'paywall') return false;
+  return true;
 }
 
 function scoreRecord(result, mode, extra = {}) {
@@ -139,6 +150,7 @@ export async function runScan({
   extractConcurrency = EXTRACT_CONCURRENCY,
   model = MODEL,
   maxAttempts = EXTRACT_MAX_ATTEMPTS,
+  remoteFetch = null, // createRemoteFetch(...) — the Vercel-side route, or null when not configured
   golden = null, // { set, baseline, every } — scored when runIndex % every === 0
   runIndex = 0,
   auditSize = null, // override the audit sample size (tests); null = schedule
@@ -177,6 +189,7 @@ export async function runScan({
     }
     if (reuse?.fulltext) row.fulltext = reuse.fulltext;
     if (reuse?.fulltextError) row.fulltextError = reuse.fulltextError;
+    if (reuse?.extraction) row.extraction = reuse.extraction;
     if (reuse?.audit) row.audit = true;
     if (reuse && (reuse.sweep || reuse.fulltext || reuse.fulltextError)) {
       row.writtenIn = entry.row.writtenIn || entry.runId;
@@ -223,24 +236,52 @@ export async function runScan({
   }
   const flagged = rows.filter((r) => r.escalation.eligible);
   const wantsText = rows.filter((r) => r.escalation.eligible || r.audit);
+  const extraction = { attempts: 0, successes: 0, byOutlet: {}, reasons: {}, routes: {}, skipped: { video: 0 }, remote: remoteFetch ? 'configured' : 'not configured' };
+  // Video pages carry no article text: known from the URL, never fetched,
+  // counted beside the rate, final on the first sighting (DEFECTS.md v2-35).
+  if (!dryRun) {
+    for (const row of wantsText) {
+      if (row.fulltext || row.fulltextError || !isVideoUrl(row.link)) continue;
+      row.fulltextError = { reason: 'no_article', detail: 'video page', stage: 'extract', chars: null, attempts: maxAttempts, at: new Date(now()).toISOString() };
+      extraction.skipped.video++;
+    }
+  }
   // Retry policy: a failed fetch is retried on later runs until maxAttempts
-  // total, then the row is UNRESOLVED (DEFECTS.md v2-15).
-  const toEscalate = dryRun ? [] : wantsText.filter((r) => !r.fulltext && (r.fulltextError?.attempts || 0) < maxAttempts);
-  if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} row(s) to full text (${auditSampled} audit)`);
-  const extraction = { attempts: 0, successes: 0, byOutlet: {} };
+  // total, then the row is UNRESOLVED (DEFECTS.md v2-15). A video page and a
+  // paywall teaser are final at once: nothing about them changes hourly.
+  const finalNow = (e) => e && (e.reason === 'no_article' || (e.reason === 'blocked' && e.detail === 'paywall'));
+  const toEscalate = dryRun ? [] : wantsText.filter((r) => !r.fulltext && !finalNow(r.fulltextError) && (r.fulltextError?.attempts || 0) < maxAttempts);
+  if (toEscalate.length) log(`[signal] escalating ${toEscalate.length} row(s) to full text (${auditSampled} audit${extraction.skipped.video ? `, ${extraction.skipped.video} video page(s) skipped` : ''})`);
+  const timeoutFor = (row) => feeds.find((f) => f.name === row.publication)?.extractTimeoutMs || EXTRACT_TIMEOUT_MS;
+  const count = (bag, key) => (bag[key] = (bag[key] || 0) + 1);
   await pool(toEscalate, extractConcurrency, async (row) => {
     const priorAttempts = row.fulltextError?.attempts || 0;
     row.fulltextError = null;
     extraction.attempts++;
-    const o = (extraction.byOutlet[row.outlet] ||= { attempts: 0, successes: 0 });
+    const o = (extraction.byOutlet[row.outlet] ||= { attempts: 0, successes: 0, reasons: {}, routes: {} });
     o.attempts++;
-    const ex = await fetchArticle(row.link, { fetch });
+    let ex = await fetchArticle(row.link, { fetch, timeoutMs: timeoutFor(row) });
+    let tried = ex.tried || [];
+    if (!ex.ok && remoteFetch && remoteWorthTrying(ex)) {
+      const remote = await remoteFetch(row.link, { timeoutMs: timeoutFor(row) });
+      tried = [...tried, 'vercel'];
+      // The remote answer replaces the runner's unless it is a plain error
+      // (the route itself failed) and the runner's reason says more.
+      if (remote.ok || remote.reason !== 'error' || ex.reason === 'error') ex = { ...remote, attempts: (ex.attempts || 0) + (remote.attempts || 1) };
+    }
     if (!ex.ok) {
-      row.fulltextError = { reason: ex.reason, detail: ex.detail, stage: 'extract', chars: ex.chars ?? null, attempts: priorAttempts + 1, at: new Date(now()).toISOString() };
+      const key = ex.detail && ex.detail !== ex.reason && /^(HTTP \d+|paywall|stub|consent wall|video page)$/.test(ex.detail) ? `${ex.reason}:${ex.detail}` : ex.reason;
+      count(extraction.reasons, key);
+      count(o.reasons, key);
+      row.fulltextError = { reason: ex.reason, detail: ex.detail, stage: 'extract', chars: ex.chars ?? null, attempts: finalNow(ex) ? maxAttempts : priorAttempts + 1, at: new Date(now()).toISOString() };
+      row.extraction = { route: null, tried, fetches: ex.attempts || 0, ms: ex.ms ?? null };
       return;
     }
     extraction.successes++;
     o.successes++;
+    count(extraction.routes, ex.route);
+    count(o.routes, ex.route);
+    row.extraction = { route: ex.route, tried, fetches: ex.attempts || 1, ms: ex.ms ?? null, source: ex.source || 'markup' };
     const res = await scorer.scoreOne({ headline: row.title, body: ex.text, mode: 'fulltext' });
     if (res.ok) row.fulltext = scoreRecord(res, 'fulltext', { chars: ex.chars });
     else row.fulltextError = { ...errorRecord(res, 'score'), chars: ex.chars, attempts: priorAttempts + 1 };

@@ -72,3 +72,17 @@ test('daily report groups history rows by UTC day with totals and means', async 
   assert.deepEqual([r[0].day, r[0].runs, r[0].complete, r[0].rows_mean, r[0].unscored_total, r[0].model_calls, r[0].cost_usd, r[0].cost_per_run_usd, r[0].fi_v2_low_mean, r[0].coverage_mean], ['2026-11-23', 2, false, 198, 2, 260, 0.4, 0.2, 90, 81]);
   assert.equal(r[1].day, '2026-11-24');
 });
+
+test('fetch-article route: host allowlist and constant-time token check', async () => {
+  const { allowedArticleHost, tokenMatches } = await import('../api/fetch-article.js');
+  assert.equal(allowedArticleHost('https://www.nytimes.com/2026/11/23/us/x.html'), true);
+  assert.equal(allowedArticleHost('https://news.sky.com/story/x'), true);
+  assert.equal(allowedArticleHost('https://abcnews.go.com/US/x'), true);
+  assert.equal(allowedArticleHost('https://evil.example.com/x'), false);
+  assert.equal(allowedArticleHost('http://169.254.169.254/latest/meta-data'), false);
+  assert.equal(allowedArticleHost('file:///etc/passwd'), false);
+  assert.equal(tokenMatches('abc', 'abc'), true);
+  assert.equal(tokenMatches('abc', 'abd'), false);
+  assert.equal(tokenMatches('', 'abc'), false);
+  assert.equal(tokenMatches('abc', undefined), false);
+});
