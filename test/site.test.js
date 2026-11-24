@@ -198,7 +198,7 @@ test('buildLabel: short sha, branch only when not main, empty without a commit',
   const src = await (await import('node:fs/promises')).readFile(new URL('../site/app.js', import.meta.url), 'utf8');
   const m = src.match(/export function buildLabel\(meta\) \{[\s\S]*?\n\}/);
   assert.ok(m, 'buildLabel is exported');
-  const buildLabel = new Function(`${m[0]}; return buildLabel;`)();
+  const buildLabel = new Function(`${m[0].replace(/^export /, '')}; return buildLabel;`)();
   assert.equal(buildLabel({ deployment: { commit: '927a401a2a672289c079a7a47ff621099d6af6a6', ref: 'main' } }), ' · BUILD 927a401');
   assert.equal(buildLabel({ deployment: { commit: 'abcdef0123456', ref: 'feature' } }), ' · BUILD abcdef0 (feature)');
   assert.equal(buildLabel({ deployment: { commit: null } }), '');
