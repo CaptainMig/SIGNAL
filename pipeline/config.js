@@ -49,6 +49,11 @@ export const MAX_ITEM_AGE_HOURS = 48;
 // A cleaned headline shorter than this is rejected as malformed (feed junk).
 export const MIN_HEADLINE_CHARS = 15;
 
+// The scheduled scan fires at this minute past every hour (UTC). One place,
+// read by the workflow comment, the site's NEXT RUN chip (via /api/meta) and
+// the run report. Changing it re-registers the schedule with GitHub.
+export const SCAN_MINUTE_UTC = 11;
+
 // Full-text extraction (escalation).
 // Default per-attempt timeout; a feed can override it with `extractTimeoutMs`
 // (the Washington Post answers in about a second or tarpits forever, so its

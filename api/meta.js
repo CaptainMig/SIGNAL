@@ -3,7 +3,7 @@
 // from the code that scores.
 import { cors } from './_ledger.js';
 import { DISPLAY_VERDICTS, INTEGRITY_VERDICTS, MODEL_VERDICTS, VERDICT_COLORS, VERDICT_DEFINITIONS, VERDICT_LABELS } from '../pipeline/verdicts.js';
-import { BODY_CHARS, FEEDS, HEADLINES_PER_FEED, MAX_ITEM_AGE_HOURS, METHODOLOGY, MODEL, PRICING } from '../pipeline/config.js';
+import { BODY_CHARS, FEEDS, HEADLINES_PER_FEED, MAX_ITEM_AGE_HOURS, METHODOLOGY, MODEL, PRICING, SCAN_MINUTE_UTC } from '../pipeline/config.js';
 import { CORE, WATCH } from '../pipeline/slam.js';
 
 const META = {
@@ -13,6 +13,7 @@ const META = {
   bodyChars: BODY_CHARS,
   headlinesPerFeed: HEADLINES_PER_FEED,
   maxItemAgeHours: MAX_ITEM_AGE_HOURS,
+  scanMinuteUtc: SCAN_MINUTE_UTC,
   verdicts: { model: MODEL_VERDICTS, display: DISPLAY_VERDICTS, integrity: INTEGRITY_VERDICTS, labels: VERDICT_LABELS, colors: VERDICT_COLORS, definitions: VERDICT_DEFINITIONS },
   feeds: FEEDS.map((f) => ({ name: f.name, outlet: f.outlet || f.name, owner: f.owner, thinBody: !!f.thinBody, host: safeHost(f.url) })),
   slam: { core: CORE, watch: WATCH },

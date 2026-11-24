@@ -33,16 +33,17 @@ function renderNav(current) {
   nav.innerHTML = ROUTES.map((r) => `<a href="${r.path}" data-link class="${current.view === r.view || (current.view === 'article' && r.view === 'headlines') ? 'active' : ''}">${r.label}</a>`).join('');
 }
 
-function renderChips({ latest, history }) {
+function renderChips({ latest, history, meta }) {
   const el = document.getElementById('chips');
   if (!latest || !latest.id || !latest.rows?.length) {
     el.innerHTML = `<span class="chip warn">NO RUN RECORDED YET</span><span class="chip">METHODOLOGY V2</span>`;
     return;
   }
   const finished = Date.parse(latest.finishedAt);
-  // The scheduled job fires hourly at :07 UTC.
+  // The scheduled job fires hourly at the minute /api/meta reports.
+  const minute = Number.isInteger(meta?.scanMinuteUtc) ? meta.scanMinuteUtc : 11;
   const next = new Date(finished);
-  next.setUTCMinutes(7, 0, 0);
+  next.setUTCMinutes(minute, 0, 0);
   if (next.getTime() <= finished) next.setUTCHours(next.getUTCHours() + 1);
   const ageMin = Math.round((Date.now() - finished) / 60000);
   const stale = ageMin > 150;
