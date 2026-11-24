@@ -228,6 +228,13 @@ export function feedsForPack(key) {
   return FEEDS.filter((f) => (f.pack || DEFAULT_PACK) === key);
 }
 
+// The outlet key for a row, from its feed's config, for rows written before
+// the key existed as much as for new ones (DEFECTS.md v2-42).
+const OUTLET_BY_PUBLICATION = new Map(FEEDS.map((f) => [f.name, f.outlet || f.name]));
+export function outletOf(row) {
+  return row?.outlet || OUTLET_BY_PUBLICATION.get(row?.publication) || row?.publication || '?';
+}
+
 export function packOf(feedOrRow) {
   return feedOrRow?.pack || DEFAULT_PACK;
 }
@@ -253,7 +260,10 @@ export const ESCALATE_CONTEXTUAL_MAX_FIDELITY = 6;
 // Extraction retry policy: a failed article fetch is retried on the next
 // runs up to this many total attempts, then the row is UNRESOLVED
 // (DEFECTS.md v2-15).
-export const EXTRACT_MAX_ATTEMPTS = 4;
+// A flagged row whose article cannot be fetched is retried on this many runs
+// in total, then it is UNRESOLVED (SOURCE BLOCKED or TIMEOUT), leaves both
+// Framing Integrity numbers and is counted beside them (DEFECTS.md v2-47).
+export const EXTRACT_MAX_ATTEMPTS = 3;
 // Audit sample of sweep VERIFIED / CONTEXTUAL rows sent to full text each run
 // (DEFECTS.md v2-8, v2-14): 10 per run, half and half, for the first 14 days
 // from AUDIT_START, then 5.

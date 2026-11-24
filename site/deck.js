@@ -256,40 +256,58 @@ export function extractionPanel(ex) {
 
 // --- Escalation & audit -----------------------------------------------------
 
+// The two escalation questions, never blended (DEFECTS.md v2-44): did a
+// PROVISIONAL flag turn out MISLEADING, and did a low-fidelity CONTEXTUAL
+// stay CONTEXTUAL. Each over the 7-day window of history and stats rows.
+export function escalationSplit(merged, days = 7, now = Date.now()) {
+  const sum = (k) => windowSum(merged, k, days, now);
+  const provisionalDecided = ['verified', 'contextual', 'contested', 'unverifiable', 'misleading'].reduce((a, v) => a + sum(`esc_provisional_to_${v}`), 0);
+  const contextualDecided = ['verified', 'contextual', 'contested', 'unverifiable', 'misleading'].reduce((a, v) => a + sum(`esc_contextual_to_${v}`), 0);
+  return {
+    provisional: { confirmed: sum('esc_provisional_to_misleading'), decided: provisionalDecided },
+    contextual: { upheld: sum('esc_contextual_to_contextual'), decided: contextualDecided },
+  };
+}
+
 function escalationBody(ctx) {
-  const { latest, history, meta } = ctx;
+  const { latest, history, meta, merged } = ctx;
   const e = latest.summary.escalation;
   const a = latest.summary.audit;
   const week = windowRuns(history, 7);
-  const c7 = windowSum(history, 'esc_confirmed', 7);
-  const cl7 = windowSum(history, 'esc_cleared', 7);
-  const decided = c7 + cl7;
+  const split = escalationSplit(merged, 7);
+  const pct = (x, n) => (n ? `${Math.round((100 * x) / n)}<span class="unit">%</span>` : '—');
   const verdicts = meta.verdicts.model;
   let matrix;
   if (e.matrix) {
     const head = verdicts.map((v) => `<th>${esc(verdictLabel(meta, v))}</th>`).join('');
     const rows = Object.entries(e.matrix).map(([sv, cells]) => `<tr><td class="l" style="color:${verdictColor(meta, sv)}">${sv}${sv === 'CONTEXTUAL' ? ' <span class="muted">F ≤ 6</span>' : ''}</td>${verdicts.map((v) => `<td>${cells[v] ?? 0}</td>`).join('')}<td class="muted">${cells.pending ?? 0}</td><td class="muted">${cells.unresolved ?? 0}</td></tr>`).join('');
-    matrix = `<div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">SWEEP → FULL TEXT</th>${head}<th>PENDING</th><th>UNRESOLVED</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    matrix = `<div class="subhead"><span>SWEEP × FULL TEXT MATRIX · THIS RUN ONLY (${esc(latest.id || '')})</span><span>ROWS ESCALATED IN THE CURRENT VIEW</span></div><div class="scrollbox"><table class="data" style="min-width:560px"><thead><tr><th class="l">SWEEP → FULL TEXT</th>${head}<th>PENDING</th><th>UNRESOLVED</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   } else {
     matrix = `<div class="note">FULL MATRIX ${pending()} · RECORDED FROM THE NEXT RUN</div>`;
   }
   const audit7 = { sampled: windowSum(history, 'audit_sampled', 7), scored: windowSum(history, 'audit_scored', 7), overturned: windowSum(history, 'audit_overturned', 7) };
   return `<div class="row">
     <div class="panel" style="border:0;padding:0">
-      <div class="hero" style="gap:10px"><div class="mid">${decided ? Math.round((100 * c7) / decided) : '—'}<span class="unit">%</span></div><div class="note">SWEEP FLAGS CONFIRMED BY<br>FULL TEXT · 7D (${c7} OF ${decided} DECIDED · ${week.length} RUN${week.length === 1 ? '' : 'S'})</div></div>
+      <div class="hero" style="gap:10px"><div class="mid">${pct(split.provisional.confirmed, split.provisional.decided)}</div><div class="note">PROVISIONAL CONFIRMED AS MISLEADING · 7D<br>${split.provisional.confirmed} OF ${split.provisional.decided} DECIDED · ${week.length} RUN${week.length === 1 ? '' : 'S'}</div></div>
+      <div class="hero" style="gap:10px"><div class="mid">${pct(split.contextual.upheld, split.contextual.decided)}</div><div class="note">CONTEXTUAL (F ≤ 6) UPHELD · 7D<br>${split.contextual.upheld} OF ${split.contextual.decided} DECIDED</div></div>
       <div class="kv-list">
         ${kv('THIS RUN · CONFIRMED / CLEARED / RECLASSIFIED', `${e.confirmed} / ${e.cleared} / ${e.reclassified ?? pending()}`)}
         ${kv('THIS RUN · PENDING / UNRESOLVED', `${e.pending} / ${e.unresolved ?? pending()}`)}
         ${kv('FAILED FETCHES · BLOCKED / TIMEOUT', `<span class="gold">${e.blocked}</span> / <span class="gold">${e.timeout}</span>`)}
+        ${kv('UNRESOLVED MEANS', `NOT FETCHABLE AFTER ${esc(String(meta.extractMaxAttempts ?? 3))} RUNS · OUT OF BOTH INTEGRITY NUMBERS, COUNTED BESIDE THEM`)}
         ${kv('CLEARED MEANS', 'FULL TEXT RETURNED VERIFIED OR CONTEXTUAL, NOTHING ELSE')}
       </div>
     </div>
     <div class="panel" style="border:0;padding:0">
-      <div class="hero" style="gap:10px"><div class="mid">${a ? fmt.num(a.overturnPct, 0) : '—'}<span class="unit">%</span></div><div class="note">AUDIT OVERTURN RATE · THIS RUN<br>${a ? `${a.overturned} OF ${a.scored} SAMPLED VERIFIED/CONTEXTUAL ROWS LEFT THE INTEGRITY SET` : pending()}</div></div>
+      <div class="hero" style="gap:10px"><div class="mid">${a ? a.sampledThisRun : '—'}</div><div class="note">AUDIT SAMPLE · THIS RUN<br>SWEEP VERIFIED / CONTEXTUAL ROWS DRAWN FOR A FULL-TEXT CHECK</div></div>
       <div class="kv-list">
-        ${kv('AUDIT · 7D SAMPLED / SCORED / OVERTURNED', a ? `${audit7.sampled} / ${audit7.scored} / ${audit7.overturned}${audit7.scored ? ` (${Math.round((100 * audit7.overturned) / audit7.scored)}%)` : ''}` : pending())}
-        ${kv('AUDIT ROWS IN THIS VIEW · CHANGED VERDICT', a ? `${a.present} · ${a.changed}` : pending())}
-        ${kv('READ AS', 'THE SWEEP’S MISS RATE ON ROWS IT DID NOT FLAG')}
+        ${kv('SAMPLED THIS RUN', a ? a.sampledThisRun : pending())}
+        ${kv('FETCHED', a ? a.fetched ?? pending('NEXT RUN') : pending())}
+        ${kv('SCORED', a ? a.scored : pending())}
+        ${kv('CHANGED VERDICT', a ? a.changed : pending())}
+        ${kv('LEFT THE INTEGRITY SET', a ? `${a.overturned}${a.scored ? ` OF ${a.scored} SCORED · ${fmt.num(a.overturnPct, 0)}%` : ' · NO SCORED SAMPLE YET'}` : pending())}
+        ${kv('AUDIT · 7D SAMPLED / SCORED / LEFT THE SET', a ? `${audit7.sampled} / ${audit7.scored} / ${audit7.overturned}` : pending())}
+        ${kv('READ AS', 'THE SWEEP’S MISS RATE ON ROWS IT DID NOT FLAG, AT THE SAMPLE SIZE SHOWN')}
       </div>
     </div>
   </div>
@@ -319,11 +337,11 @@ function goldenPanel(ctx) {
       ${kv('FIDELITY DRIFT', g.fidelityDrift == null ? '—' : fmt.signed(g.fidelityDrift))}
       ${kv('SENSATIONALISM DRIFT', g.sensDrift == null ? '—' : fmt.signed(g.sensDrift))}
       ${kv('CLICKBAIT DRIFT', g.clickDrift == null ? '—' : fmt.signed(g.clickDrift))}
-      ${kv('VS AUTHORING INTENT', fmt.pct(g.expectedAgreementPct))}
+      ${kv('VS AUTHORING INTENT · SYNTHETIC SET', `${fmt.pct(g.expectedAgreementPct)} · SCORER DRIFT, NOT ACCURACY`)}
       ${kv('ALERT BELOW', `<span class="red">${g.alertBelowPct ?? 90}%</span>`)}
       ${kv('BASELINE RUN · SAME MODEL / PROMPT', g.baselineRunId ? `${esc(g.baselineRunId)} · ${g.sameModel ? 'YES' : '<span class="gold">NO</span>'} / ${g.samePrompt ? 'YES' : '<span class="gold">NO</span>'}` : '—')}
     </div>
-    <div class="note">50 frozen synthetic pairs scored in full-text mode. Drift here is the scorer moving, not the news.</div>
+    <div class="note">50 frozen SYNTHETIC pairs (every entity fictional) scored in full-text mode. This panel measures scorer drift, not accuracy: agreement with the authoring intent says whether the scorer still reads the set the way it did, not whether it is right about real news.</div>
   </div>`;
 }
 

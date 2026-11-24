@@ -1,6 +1,6 @@
 // Headline table: every row of the current view with its final verdict,
 // filterable by verdict and slam flag, sortable, one tap from the article.
-import { esc, fmt, pill, scoreColor, verdictColor, verdictLabel, panelHead } from './ui.js';
+import { esc, fmt, pill, scoreColor, unresolvedPill, verdictColor, verdictLabel, panelHead } from './ui.js';
 
 const COLUMNS = [
   { key: 'verdict', label: 'VERDICT', get: (r) => r.final?.verdict ?? (r.final?.source === 'unscored' ? 'zz' : 'z') },
@@ -73,7 +73,7 @@ function table(data) {
     const src = f.source === 'fulltext' ? '<span class="accent" title="full-text verdict">FT</span>' : f.source === 'tone' ? '<span class="muted" title="headline only">T</span>' : '';
     const cell = (v, inv) => (v == null ? '<span class="muted">—</span>' : `<span style="color:${scoreColor(v, inv)}">${v}</span>`);
     const slam = r.slam?.matched ? `<span class="slam-badge ${r.slam.tier}" title="Slam-journalism verb (${r.slam.tier})">SLAM · ${esc(r.slam.term)}</span>` : '';
-    const verdict = f.source === 'unscored' ? `<span class="pill" style="color:#8d939e;border-color:#8d939e66">UNSCORED</span>` : pill(meta, f.verdict);
+    const verdict = f.source === 'unscored' ? `<span class="pill" style="color:#8d939e;border-color:#8d939e66">UNSCORED</span>` : f.unresolved ? unresolvedPill(f) : pill(meta, f.verdict);
     return `<tr>
       <td class="l" data-l="VERDICT">${verdict} ${src}</td>
       <td class="l title" data-l=""><a href="/article/${esc(r.id)}" data-link>${esc(r.title)}</a>${slam}</td>

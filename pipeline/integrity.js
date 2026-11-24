@@ -18,6 +18,7 @@
 // Every function is pure and takes ledger rows (see run.js for the shape).
 // Outlet grouping uses `row.outlet` (DEFECTS.md v2-5).
 // ---------------------------------------------------------------------------
+import { outletOf } from './config.js';
 import { OUTLET_MIN_N } from './config.js';
 
 const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
@@ -98,10 +99,12 @@ export function framingIntegrityV1(rows) {
 
 // Group FI-population rows by outlet (falls back to publication for rows
 // written before the outlet key existed).
+export const outletKey = (r) => outletOf(r);
+
 export function groupByOutlet(rows) {
   const by = new Map();
   for (const r of rows) {
-    const key = r.outlet || r.publication;
+    const key = outletKey(r);
     if (!by.has(key)) by.set(key, []);
     by.get(key).push(r);
   }

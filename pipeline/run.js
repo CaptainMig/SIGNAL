@@ -363,6 +363,12 @@ export async function runScan({
 
   for (const row of rows) {
     row.final = finalize(row);
+    // A flag that could never be checked is shown as UNRESOLVED, never left
+    // under a distortion flag (DEFECTS.md v2-47).
+    if (row.escalation?.unresolved) {
+      row.final.unresolved = true;
+      row.final.unresolvedReason = row.fulltextError?.reason || 'blocked';
+    }
     if (isFreshRow(row)) row.writtenIn = id;
   }
   // The article body is never stored; the summary snippet is dropped too.

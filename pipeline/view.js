@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_PACK, packOf } from './config.js';
+import { DEFAULT_PACK, outletOf, packOf } from './config.js';
 import { ledgerPaths, readPointer } from './ledger.js';
 
 export function referencedRuns(run) {
@@ -44,7 +44,7 @@ export async function buildCurrentView({ run, loadRun, pack = DEFAULT_PACK }) {
     summary: packs?.[pack] || run.summary,
     scorecards: view.scorecards ?? null,
     ...(view.metros ? { metros: view.metros } : {}),
-    rows: rows.filter((r) => packOf(r) === pack),
+    rows: rows.filter((r) => packOf(r) === pack).map((r) => (r.outlet ? r : { ...r, outlet: outletOf(r) })),
     unresolvedCarried,
     builtAt: new Date().toISOString(),
   };
