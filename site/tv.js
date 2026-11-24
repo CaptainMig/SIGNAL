@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Live TV rail — OFF BY DEFAULT. A companion to the audit, never the centrepiece.
+// Live TV — OFF BY DEFAULT. A companion to the audit, never the centrepiece.
 //
 // HARD RULE: the ONLY permitted video is the official YouTube embed of a
 // broadcaster's own public live channel (YouTube licenses these for embedding
@@ -10,6 +10,14 @@
 // script, no network. One stream at a time; muted on start. The last-picked
 // channel is remembered on this device (localStorage) and offered as a
 // one-tap resume, never auto-played.
+//
+// Where it plays: the DOCK, a single element outside the routed view
+// (#tv-dock in index.html) that is mounted once and never re-rendered, so a
+// stream keeps playing while the viewer moves between pages. On desktop the
+// dock sits in the bottom-right corner; on a phone it is a strip along the
+// bottom. The TV button in the top nav opens it from any page; the deck's
+// Live TV rail is a second set of the same channel buttons. Closing the dock
+// stops the stream: nothing ever plays out of sight.
 // ---------------------------------------------------------------------------
 import { esc } from './ui.js';
 
@@ -23,6 +31,7 @@ export const LIVE_TV_CHANNELS = [
 
 export const TV_STORAGE_KEY = 'signal.tv.channel';
 export const TV_LOAD_TIMEOUT_MS = 12_000;
+export const OFF_STATE = 'OFF · TAP A CHANNEL TO START';
 
 // Official YouTube embed URL for a channel's current live stream. Muted;
 // autoplay applies only because the iframe is mounted solely after a tap.
@@ -54,41 +63,100 @@ export function rememberChannel(ch, storage = globalThis.localStorage) {
   }
 }
 
-export function renderTvSection() {
-  const remembered = rememberedChannel();
-  const buttons = LIVE_TV_CHANNELS.map((c) => `<button type="button" data-tv-channel="${esc(c.name)}" class="${remembered?.name === c.name ? 'remembered' : ''}">${esc(c.name)}</button>`).join('');
+function channelButtons(storage) {
+  const remembered = rememberedChannel(storage);
+  return LIVE_TV_CHANNELS.map((c) => `<button type="button" data-tv-channel="${esc(c.name)}" class="${remembered?.name === c.name ? 'remembered' : ''}">${esc(c.name)}</button>`).join('');
+}
+
+function idleHtml(storage) {
+  const remembered = rememberedChannel(storage);
+  return `<div class="tv-idle note">${remembered ? `Last time: ${esc(remembered.name)}. Tap it to resume. ` : ''}No video loads until you tap a channel.</div>`;
+}
+
+// The dock's markup: channels, the stage, a close control. No iframe and no
+// YouTube URL until a tap.
+export function renderDock(storage = globalThis.localStorage) {
+  return `<div class="tv-dock-head mono">
+      <span class="tv-dock-title">LIVE TV</span>
+      <span class="tv-state" data-tv-state>${OFF_STATE}</span>
+      <button type="button" class="tv-close" data-tv-close aria-label="Close Live TV">✕</button>
+    </div>
+    <div class="filters tv-channels" data-tv-channels>${channelButtons(storage)}</div>
+    <div class="tv-box" data-tv-box>${idleHtml(storage)}</div>
+    <div class="note" data-tv-caption></div>
+    <div class="note">Official broadcaster YouTube live embeds only — a companion to the audit, not a source of record. Muted on start; one stream at a time. No streams are scraped, proxied or reframed.</div>`;
+}
+
+// The deck's Live TV rail: the same channel buttons; the player is the dock.
+export function renderTvSection(storage = globalThis.localStorage) {
   return `<details class="section tv" id="live-tv">
-    <summary class="panel-head"><span>LIVE TV · OFFICIAL BROADCASTER EMBEDS</span><span class="tv-state" data-tv-state>OFF · TAP A CHANNEL TO START</span></summary>
+    <summary class="panel-head"><span>LIVE TV · OFFICIAL BROADCASTER EMBEDS</span><span class="tv-state" data-tv-state>${OFF_STATE}</span></summary>
     <div class="section-body">
-      <div class="filters tv-channels" data-tv-channels>${buttons}</div>
-      <div class="tv-stage" data-tv-stage>
-        <div class="tv-box" data-tv-box><div class="tv-idle note">${remembered ? `Last time: ${esc(remembered.name)}. Tap it to resume. ` : ''}No video loads until you tap a channel.</div></div>
-        <div class="note" data-tv-caption></div>
-      </div>
-      <div class="note">Official broadcaster YouTube live embeds only — a companion to the audit, not a source of record. Muted on start; one stream at a time. No streams are scraped, proxied or reframed.</div>
+      <div class="filters tv-channels" data-tv-channels>${channelButtons(storage)}</div>
+      <div class="note">Plays in the dock — bottom-right on desktop, along the bottom on a phone — and keeps playing while you move between pages. The TV button in the top nav opens it from anywhere; closing the dock stops the stream. Official broadcaster YouTube live embeds only, muted on start, one stream at a time. No streams are scraped, proxied or reframed.</div>
     </div>
   </details>`;
 }
 
-export function wireTv(root, { storage = globalThis.localStorage, timeoutMs = TV_LOAD_TIMEOUT_MS } = {}) {
-  const section = root.querySelector('#live-tv');
-  if (!section) return;
-  const box = section.querySelector('[data-tv-box]');
-  const caption = section.querySelector('[data-tv-caption]');
-  const state = section.querySelector('[data-tv-state]');
-  const channels = section.querySelector('[data-tv-channels]');
-  let timer = null;
+let controller = null;
 
-  function stop() {
+export function getTv() {
+  return controller;
+}
+
+/**
+ * Mount the dock once. Returns the controller:
+ *   open(), close(), toggle(), play(channel), stop(), isOpen(), current(),
+ *   snapshot(), subscribe(fn) → unsubscribe
+ */
+export function mountTv(dock, { storage = globalThis.localStorage, timeoutMs = TV_LOAD_TIMEOUT_MS } = {}) {
+  if (controller) return controller;
+  dock.innerHTML = renderDock(storage);
+  const box = dock.querySelector('[data-tv-box]');
+  const caption = dock.querySelector('[data-tv-caption]');
+  const state = dock.querySelector('[data-tv-state]');
+  const channels = dock.querySelector('[data-tv-channels]');
+  let timer = null;
+  let current = null;
+  let unavailable = null;
+  const listeners = new Set();
+
+  const snapshot = () => ({ open: !dock.hidden, channel: current?.name || null, unavailable });
+  const notify = () => {
+    for (const fn of [...listeners]) {
+      try {
+        fn(snapshot());
+      } catch {
+        /* a listener must never break the player */
+      }
+    }
+  };
+  const mark = (name) => channels.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tvChannel === name));
+
+  function clear() {
     if (timer) clearTimeout(timer);
     timer = null;
     box.innerHTML = '';
+    current = null;
+    mark(null);
+  }
+
+  function stop() {
+    clear();
+    unavailable = null;
+    box.innerHTML = idleHtml(storage);
+    caption.textContent = '';
+    state.textContent = OFF_STATE;
+    notify();
   }
 
   function play(ch) {
-    stop();
+    clear();
+    unavailable = null;
+    dock.hidden = false;
     rememberChannel(ch, storage);
-    channels.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tvChannel === ch.name));
+    current = ch;
+    mark(ch.name);
     state.textContent = `ON · ${ch.name.toUpperCase()} · MUTED`;
     caption.textContent = `${ch.name} · official YouTube live embed`;
     const frame = document.createElement('iframe');
@@ -98,19 +166,36 @@ export function wireTv(root, { storage = globalThis.localStorage, timeoutMs = TV
     frame.setAttribute('allowfullscreen', '');
     frame.setAttribute('loading', 'eager');
     frame.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
-    const unavailable = () => {
-      stop();
+    const failed = () => {
+      clear();
+      unavailable = ch.name;
       box.innerHTML = `<div class="tv-idle note red">STREAM UNAVAILABLE · ${esc(ch.name)}</div>`;
       caption.textContent = 'The embed did not load. The stream may be offline, region-blocked, or embedding may be disabled for this channel.';
       state.textContent = `OFF · ${ch.name.toUpperCase()} UNAVAILABLE`;
+      notify();
     };
-    frame.addEventListener('error', unavailable);
+    frame.addEventListener('error', failed);
     frame.addEventListener('load', () => {
       if (timer) clearTimeout(timer);
       timer = null;
     });
-    timer = setTimeout(unavailable, timeoutMs);
+    timer = setTimeout(failed, timeoutMs);
     box.appendChild(frame);
+    notify();
+  }
+
+  function open() {
+    dock.hidden = false;
+    notify();
+  }
+  function close() {
+    stop();
+    dock.hidden = true;
+    notify();
+  }
+  function toggle() {
+    if (dock.hidden) open();
+    else close();
   }
 
   channels.addEventListener('click', (e) => {
@@ -119,14 +204,49 @@ export function wireTv(root, { storage = globalThis.localStorage, timeoutMs = TV
     const ch = channelByName(b.dataset.tvChannel);
     if (ch) play(ch);
   });
-  // Closing the section stops the stream: nothing plays out of sight.
-  section.addEventListener('toggle', () => {
-    if (!section.open) {
-      stop();
-      box.innerHTML = `<div class="tv-idle note">No video loads until you tap a channel.</div>`;
-      caption.textContent = '';
-      state.textContent = 'OFF · TAP A CHANNEL TO START';
-      channels.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+  dock.querySelector('[data-tv-close]').addEventListener('click', close);
+
+  controller = {
+    open,
+    close,
+    toggle,
+    play,
+    stop,
+    isOpen: () => !dock.hidden,
+    current: () => current,
+    snapshot,
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+  };
+  return controller;
+}
+
+// Wire the deck's rail to the dock: its buttons play in the dock and its
+// state line mirrors the dock while the rail is on the page.
+export function wireTv(root, opts = {}) {
+  const section = root.querySelector('#live-tv');
+  if (!section) return;
+  const tv = controller || (typeof document !== 'undefined' && document.getElementById('tv-dock') ? mountTv(document.getElementById('tv-dock'), opts) : null);
+  if (!tv) return;
+  const channels = section.querySelector('[data-tv-channels]');
+  const state = section.querySelector('[data-tv-state]');
+  let unsub = () => {};
+  const reflect = (snap) => {
+    if (!section.isConnected) {
+      unsub();
+      return;
     }
+    state.textContent = snap.channel ? `ON · ${snap.channel.toUpperCase()} · MUTED · IN THE DOCK` : snap.unavailable ? `OFF · ${snap.unavailable.toUpperCase()} UNAVAILABLE` : OFF_STATE;
+    channels.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tvChannel === snap.channel));
+  };
+  unsub = tv.subscribe(reflect);
+  reflect(tv.snapshot());
+  channels.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-tv-channel]');
+    if (!b) return;
+    const ch = channelByName(b.dataset.tvChannel);
+    if (ch) tv.play(ch);
   });
 }

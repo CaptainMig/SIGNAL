@@ -40,6 +40,9 @@ a:hover { color: var(--accent); }
 .nav a { display: flex; align-items: center; min-height: 44px; padding: 0 14px; text-decoration: none; border: 0.5px solid var(--hair); color: var(--text); }
 .nav a.active { background: var(--accent); color: var(--ink); border-color: var(--accent); }
 .nav a:hover:not(.active) { color: var(--accent); }
+.nav .nav-tv { display: flex; align-items: center; min-height: 44px; padding: 0 14px; border: 0.5px solid var(--hair); background: transparent; color: var(--accent); font: inherit; letter-spacing: inherit; cursor: pointer; }
+.nav .nav-tv:hover { border-color: var(--accent); }
+.nav .nav-tv.active { background: var(--accent); color: var(--ink); border-color: var(--accent); }
 
 /* Chips */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; letter-spacing: 0.06em; color: var(--muted); }
@@ -106,14 +109,26 @@ details.section .section-body > .row { width: 100%; }
 details.section .section-body .panel { flex: 1 1 320px; }
 @media (min-width: 640px) { details.section > summary { padding: 18px 24px; } details.section .section-body { padding: 0 24px 24px; } }
 
-/* Live TV */
+/* Live TV: the dock (fixed, outside the routed view) and the deck rail */
 .tv-channels button { color: var(--muted); border-color: var(--hair); background: transparent; }
 .tv-channels button.remembered { color: var(--text); border-color: var(--text); }
 .tv-channels button.active { color: var(--ink); background: var(--text); border-color: var(--text); }
-.tv-stage { display: flex; flex-direction: column; gap: 8px; max-width: 720px; }
 .tv-box { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border: 0.5px solid var(--hair2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .tv-box iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .tv-idle { padding: 16px; text-align: center; }
+.tv-dock { position: fixed; z-index: 50; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--ink); border-top: 0.5px solid var(--hair); }
+.tv-dock[hidden] { display: none; }
+@media (min-width: 640px) { .tv-dock { left: auto; right: 16px; bottom: 16px; width: 380px; max-width: calc(100vw - 32px); padding: 12px; border: 0.5px solid var(--hair); } }
+.tv-dock-head { display: flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: 0.14em; color: var(--muted); }
+.tv-dock-title { color: var(--accent); }
+.tv-dock .tv-state { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-close { flex: none; width: 36px; height: 36px; border: 0.5px solid var(--hair); background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.tv-close:hover { border-color: var(--accent); color: var(--accent); }
+.tv-dock .tv-channels button { min-height: 32px; padding: 4px 8px; font-size: 10px; }
+.tv-dock .note { font-size: 10px; }
+/* Keep the page's last content clear of the phone strip while the dock is open. */
+body:has(.tv-dock:not([hidden])) .wrap { padding-bottom: 300px; }
+@media (min-width: 640px) { body:has(.tv-dock:not([hidden])) .wrap { padding-bottom: 40px; } }
 
 /* Verdict mix bar */
 .mix { display: flex; height: 28px; gap: 2px; }

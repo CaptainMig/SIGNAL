@@ -9,6 +9,7 @@ import { renderArticle } from './article.js';
 import { renderOutlets } from './outlets.js';
 import { renderMethod } from './method.js';
 import { renderValidate, wireValidate } from './validate.js';
+import { getTv, mountTv } from './tv.js';
 
 const ROUTES = [
   { path: '/', label: 'DECK', view: 'deck' },
@@ -28,9 +29,20 @@ function route() {
   return r ? { view: r.view, path: p } : { view: 'notfound', path: p };
 }
 
+// The TV button is not a route: it opens the Live TV dock from any page.
+function tvButton(snap) {
+  const on = !!snap?.channel;
+  return `<button type="button" class="nav-tv${snap?.open ? ' active' : ''}" data-tv-toggle aria-pressed="${snap?.open ? 'true' : 'false'}" aria-label="${snap?.open ? 'Close' : 'Open'} Live TV">${on ? 'TV · ON' : 'TV'}</button>`;
+}
+
 function renderNav(current) {
   const nav = document.querySelector('.nav');
-  nav.innerHTML = ROUTES.map((r) => `<a href="${r.path}" data-link class="${current.view === r.view || (current.view === 'article' && r.view === 'headlines') ? 'active' : ''}">${r.label}</a>`).join('');
+  nav.innerHTML = ROUTES.map((r) => `<a href="${r.path}" data-link class="${current.view === r.view || (current.view === 'article' && r.view === 'headlines') ? 'active' : ''}">${r.label}</a>`).join('') + tvButton(getTv()?.snapshot());
+}
+
+function reflectTv(snap) {
+  const b = document.querySelector('[data-tv-toggle]');
+  if (b) b.outerHTML = tvButton(snap);
 }
 
 function renderChips({ latest, history }) {
@@ -104,6 +116,11 @@ function render() {
 }
 
 document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-tv-toggle]');
+  if (t) {
+    getTv()?.toggle();
+    return;
+  }
   const a = e.target.closest('a[data-link]');
   if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
@@ -111,6 +128,11 @@ document.addEventListener('click', (e) => {
   render();
 });
 window.addEventListener('popstate', render);
+
+// The dock lives outside the routed view and is mounted exactly once, so a
+// stream survives navigation. It works even if the ledger fails to load.
+const dock = document.getElementById('tv-dock');
+if (dock) mountTv(dock).subscribe(reflectTv);
 
 loadAll()
   .then((data) => {
