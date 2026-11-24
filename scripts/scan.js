@@ -55,10 +55,10 @@ export function renderReport({ run, rows, scorer, paths }) {
   L.push('');
   L.push(`${s.feeds.live}/${s.feeds.total} live · ${s.feeds.stale} stale · ${s.feeds.blocked} blocked · ${s.feeds.dead} dead`);
   L.push('');
-  L.push('| Feed | Status | HTTP | Fetched | Kept | Stale | Malformed | Dupes | Excluded | ms | Reason |');
-  L.push('|---|---|---|---|---|---|---|---|---|---|---|');
+  L.push('| Feed | Status | HTTP | Fetched | Kept | Stale | Malformed | Dupes | ms | Reason |');
+  L.push('|---|---|---|---|---|---|---|---|---|---|');
   for (const f of run.feeds) {
-    L.push(`| ${f.name} | ${f.status} | ${f.httpStatus ?? '—'} | ${f.fetched} | ${f.kept} | ${f.stale} | ${f.malformed} | ${f.dupes} | ${f.excluded ?? 0} | ${f.ms} | ${f.reason || ''} |`);
+    L.push(`| ${f.name} | ${f.status} | ${f.httpStatus ?? '—'} | ${f.fetched} | ${f.kept} | ${f.stale} | ${f.malformed} | ${f.dupes} | ${f.ms} | ${f.reason || ''} |`);
   }
   const blocked = run.feeds.filter((f) => f.status === 'blocked');
   if (blocked.length) {

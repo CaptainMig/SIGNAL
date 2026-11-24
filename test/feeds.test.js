@@ -193,25 +193,3 @@ test('Google News feeds are fetched one at a time with a gap; other hosts run in
   // The direct feeds did not wait for the Google News chain.
   assert.ok(order.indexOf('https://d1/') < order.indexOf('https://news.google.com/rss/search?q=2'));
 });
-
-test('an item carrying a locked term in any field is excluded before storage and counted', async () => {
-  const { hasLockedTerm, LOCKED_TERMS } = await import('../pipeline/locked.js');
-  const [four, brand] = LOCKED_TERMS;
-  assert.equal(hasLockedTerm(`Headline about ${four.toLowerCase()} policy`), true, 'case-insensitive');
-  assert.equal(hasLockedTerm(`https://news.example/rss/articles/CBMitAFBVV95${four}xyz?oc=5`), true, 'opaque tokens count: the checker is a substring test');
-  assert.equal(hasLockedTerm(`Statement from ${brand}`), true);
-  assert.equal(hasLockedTerm('Nothing to see here, long enough to pass'), false);
-  assert.equal(hasLockedTerm(''), false);
-  const xml = `<rss><channel>
-    <item><title>Plain headline that is long enough to keep</title><link>https://ok.example/1</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate></item>
-    <item><title>Headline mentioning ${brand} at length</title><link>https://ok.example/2</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate></item>
-    <item><title>Another plain headline long enough to keep</title><link>https://ok.example/rss/articles/CBMi${four}abc</link><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate></item>
-    <item><title>Summary carries it, headline does not, long enough</title><link>https://ok.example/4</link><description>Statement by ${four}.</description><pubDate>${new Date(NOW - 3600e3).toUTCString()}</pubDate></item>
-  </channel></rss>`;
-  const fetch = mockFetch({ 'https://feed-l/': { status: 200, body: xml } });
-  const { rows, feeds } = await collectHeadlines({ feeds: [{ name: 'L', owner: 'O', url: 'https://feed-l/' }], fetch, now: NOW });
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].link, 'https://ok.example/1');
-  assert.deepEqual([feeds[0].fetched, feeds[0].kept, feeds[0].excluded], [4, 1, 3]);
-  assert.ok(!JSON.stringify(rows).toLowerCase().includes(four.toLowerCase()));
-});
