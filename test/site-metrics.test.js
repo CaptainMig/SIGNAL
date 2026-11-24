@@ -41,3 +41,18 @@ test('historySeries keeps the provisional-outcome range and the sampling interva
   assert.deepEqual([strict[0].low, strict[0].high, strict[0].ciLo], [60, 70, 55]);
   assert.equal(windowSum(rows, 'rows_total', 1, now), 400);
 });
+
+test('staleness: null under two hours, an age beyond it; the deck banner renders only then', async () => {
+  const { STALE_AFTER_MS, staleness } = await import('../site/metrics.js');
+  const { staleBanner } = await import('../site/deck.js');
+  const now = Date.parse('2026-11-24T03:00:00Z');
+  assert.equal(STALE_AFTER_MS, 7200e3);
+  assert.equal(staleness({ finishedAt: '2026-11-24T01:30:00Z' }, now), null, '90 minutes: fresh');
+  assert.equal(staleness({ finishedAt: '2026-11-24T01:00:00Z' }, now), null, 'exactly two hours: not yet stale');
+  assert.deepEqual(staleness({ finishedAt: '2026-11-24T00:59:00Z' }, now), { ageMs: 121 * 60000, ageMinutes: 121, finishedAt: '2026-11-24T00:59:00Z' });
+  assert.equal(staleness(null, now), null);
+  assert.equal(staleness({ finishedAt: 'garbage' }, now), null);
+  assert.equal(staleBanner({ finishedAt: '2026-11-24T01:30:00Z' }, now), '');
+  const b = staleBanner({ finishedAt: '2026-11-23T20:10:00Z' }, now);
+  assert.ok(b.includes('data-stale-banner') && b.includes('LEDGER STALE · LAST RUN FINISHED 7H AGO') && b.includes('15:10 ET'));
+});

@@ -10,6 +10,7 @@ import { renderOutlets } from './outlets.js';
 import { renderMethod } from './method.js';
 import { renderValidate, wireValidate } from './validate.js';
 import { getTv, mountTv } from './tv.js';
+import { staleness } from './metrics.js';
 
 const ROUTES = [
   { path: '/', label: 'DECK', view: 'deck' },
@@ -57,8 +58,14 @@ function renderChips({ latest, history, meta }) {
   const next = new Date(finished);
   next.setUTCMinutes(minute, 0, 0);
   if (next.getTime() <= finished) next.setUTCHours(next.getUTCHours() + 1);
-  const ageMin = Math.round((Date.now() - finished) / 60000);
-  const stale = ageMin > 150;
+  const stale = staleness(latest) !== null;
+  // When the ledger is stale the next slot is counted from now, not from a
+  // run that is hours old.
+  if (stale) {
+    next.setTime(Date.now());
+    next.setUTCMinutes(minute, 0, 0);
+    if (next.getTime() <= Date.now()) next.setUTCHours(next.getUTCHours() + 1);
+  }
   el.innerHTML = [
     `<span class="chip ${stale ? 'warn' : 'live'}">${stale ? `LEDGER STALE · ${fmt.age(latest.finishedAt)} OLD` : 'LIVE · LEDGER'}</span>`,
     `<span class="chip">LAST RUN ${fmt.dateEt(latest.finishedAt)} ${fmt.et(latest.finishedAt)}</span>`,
