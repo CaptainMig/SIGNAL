@@ -25,6 +25,8 @@ import { detectSlam } from './slam.js';
 import { fetchArticle, isVideoUrl } from './extract.js';
 import { createRobotsChecker } from './robots.js';
 import { bylineOf } from './bylines.js';
+import { rowFingerprint } from './fingerprint.js';
+import { hostOf } from './feeds.js';
 import { auditResult, auditSampleSize, escalationOutcome, escalationReason, pickAuditRows } from './escalate.js';
 import { summarizeRun } from './summarize.js';
 import { promptHash } from './prompt.js';
@@ -75,6 +77,8 @@ function reusable(entry, row, hashes, model) {
   if (prior.extraction && (out.fulltext || out.fulltextError)) out.extraction = prior.extraction;
   // A byline read from the article page is kept with the carried score.
   if (prior.byline?.source === 'article' && out.fulltext) out.byline = prior.byline;
+  // A fingerprint of the article text is kept with the carried full-text score.
+  if (prior.fp?.source === 'fulltext' && out.fulltext) out.fp = prior.fp;
   return out;
 }
 
@@ -161,6 +165,7 @@ export async function runScan({
 } = {}) {
   const startedMs = now();
   const startedAt = new Date(startedMs).toISOString();
+  const id = runIdFor(startedAt);
   const hashes = { sweep: promptHash('sweep'), fulltext: promptHash('fulltext'), tone: promptHash('tone') };
   const dryRun = !scorer;
 
@@ -184,6 +189,15 @@ export async function runScan({
       // Every row belongs to exactly one pack; nothing is blended across packs.
       pack: packOf(feed),
       metro: feed?.metro || null,
+      // Two timestamps (schema brief §2): the publisher's own, flagged when
+      // it is really an aggregator's, and the run clock at first sighting.
+      timestampSource: hostOf(feed?.url || '') === 'news.google.com' ? 'aggregator' : 'feed',
+      firstSeen: startedAt,
+      firstSeenRun: id,
+      pubDateChanged: false,
+      // Fingerprint (schema brief §1) from the text already in hand; the
+      // article text replaces it at escalation. Never the text itself.
+      fp: rowFingerprint({ title: r.title, text: r.thinBody ? '' : r.summary || '', source: r.thinBody || !r.summary ? 'title' : 'summary' }),
       escalation: { eligible: false, reason: null, sweepVerdict: null, outcome: null, unresolved: false, attempts: 0 },
       final: null,
     };
@@ -197,6 +211,20 @@ export async function runScan({
   let carried = 0;
   for (const row of rows) {
     const entry = prior.get(row.id);
+    if (entry) {
+      // First sighting is the earliest run that saw this id; rows written
+      // before this field existed get the run they were last written in.
+      const p = entry.row;
+      row.firstSeen = p.firstSeen || `${entry.runId}:00:00.000Z`;
+      row.firstSeenRun = p.firstSeenRun || entry.runId;
+      if (p.pubDate && row.pubDate && p.pubDate !== row.pubDate) {
+        row.pubDateChanged = true;
+        row.pubDateFirst = p.pubDateFirst || p.pubDate;
+      } else if (p.pubDateChanged) {
+        row.pubDateChanged = true;
+        row.pubDateFirst = p.pubDateFirst;
+      }
+    }
     const reuse = reusable(entry, row, hashes, model);
     if (reuse?.sweep) {
       row.sweep = reuse.sweep;
@@ -206,6 +234,7 @@ export async function runScan({
     if (reuse?.fulltextError) row.fulltextError = reuse.fulltextError;
     if (reuse?.extraction) row.extraction = reuse.extraction;
     if (reuse?.byline && row.byline.source === 'none') row.byline = reuse.byline;
+    if (reuse?.fp) row.fp = reuse.fp;
     if (reuse?.audit) row.audit = true;
     if (reuse && (reuse.sweep || reuse.fulltext || reuse.fulltextError)) {
       row.writtenIn = entry.row.writtenIn || entry.runId;
@@ -234,7 +263,6 @@ export async function runScan({
 
   // Escalation: flagged sweep rows (PROVISIONAL, CONTESTED, low-fidelity
   // CONTEXTUAL) get the article body and a full-text score.
-  const id = runIdFor(startedAt);
   for (const row of rows) {
     const reason = escalationReason(row.sweep);
     if (reason) row.escalation = { eligible: true, reason, sweepVerdict: row.sweep.verdict, outcome: null, unresolved: false, attempts: row.fulltextError?.attempts || 0 };
@@ -309,6 +337,7 @@ export async function runScan({
     count(o.routes, ex.route);
     row.extraction = { route: ex.route, tried, fetches: ex.attempts || 1, ms: ex.ms ?? null, source: ex.source || 'markup' };
     if (row.byline.source === 'none' && ex.authors?.length) row.byline = bylineOf({ outlet: row.outlet, names: ex.authors, source: 'article' });
+    row.fp = rowFingerprint({ title: row.title, text: ex.text, source: 'fulltext' });
     const res = await scorer.scoreOne({ headline: row.title, body: ex.text, mode: 'fulltext' });
     if (res.ok) row.fulltext = scoreRecord(res, 'fulltext', { chars: ex.chars });
     else row.fulltextError = { ...errorRecord(res, 'score'), chars: ex.chars, attempts: priorAttempts + 1 };

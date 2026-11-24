@@ -69,7 +69,7 @@ test('a full run: rows, modes, escalation outcomes, finals, summary', async () =
   assert.ok(!serialized.includes('The Senate passed the budget bill 52'), 'feed summary must not be stored');
   assert.ok(!serialized.includes('late-night session that stretched'), 'extracted article text must not be stored');
   assert.ok(!serialized.includes('Subscribe to continue'), 'stub text must not be stored');
-  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction', 'pack', 'metro', 'byline'];
+  const ALLOWED = ['id', 'title', 'link', 'canonical', 'publication', 'outlet', 'owner', 'pubDate', 'undated', 'thinBody', 'slam', 'sweep', 'sweepError', 'fulltext', 'fulltextError', 'escalation', 'final', 'writtenIn', 'audit', 'auditSampledIn', 'auditOutcome', 'extraction', 'pack', 'metro', 'byline', 'fp', 'firstSeen', 'firstSeenRun', 'timestampSource', 'pubDateChanged', 'pubDateFirst'];
   for (const r of rows) for (const k of Object.keys(r)) assert.ok(ALLOWED.includes(k), `unexpected row field ${k}`);
   const SCORE_KEYS = ['mode', 'verdict', 'fidelity', 'sens', 'click', 'rationale', 'provisional', 'model', 'promptHash', 'usage', 'latencyMs', 'at', 'chars', 'carriedFrom'];
   for (const r of rows) for (const s of [r.sweep, r.fulltext]) if (s) for (const k of Object.keys(s)) assert.ok(SCORE_KEYS.includes(k), `unexpected score field ${k}`);
@@ -365,4 +365,43 @@ test('rows carry a byline from the feed, or from the article page when the feed 
   assert.deepEqual([b.rows, b.withByline, b.fromFeed, b.fromArticle], [3, 2, 1, 1]);
   assert.equal(b.byOutlet['Outlet D'].pct, 66.7);
   assert.ok(!JSON.stringify(rows).includes('The council voted late'), 'no article text in rows');
+});
+
+test('schema v3 fields: fingerprint from summary then article text, never the text; two timestamps; first sighting and re-stamp carried across runs', async () => {
+  const item = (title, link, pub, desc) => `<item><title>${title}</title><link>${link}</link><pubDate>${pub}</pubDate><description>${desc}</description></item>`;
+  const pub1 = new Date(NOW - 3600e3).toUTCString();
+  // Distinct sentences so the shingle set is large; repeated text collapses to a few shingles.
+  const body = Array.from({ length: 40 }, (_, i) => `Paragraph ${i} says the council voted late on day ${i} after session number ${i} ran long.`).join(' ');
+  const feedXml = (pub) => `<rss><channel>${item('Mayor slams council over transit vote delay again', 'https://example-e.com/news/one', pub, 'The mayor criticised the council at length over the delay.')}${item('Quiet budget passes without any drama at all', 'https://example-e.com/news/two', pub1, 'A plain description of the budget vote.')}</channel></rss>`;
+  const page = `<html><head><title>T</title></head><body><article>${'<p>' + body + '</p>'}</article></body></html>`;
+  const fetch = mockFetch({ 'https://feed-e/': { status: 200, body: feedXml(pub1) }, 'https://example-e.com/robots.txt': { status: 404, body: '' }, 'https://example-e.com/news/one': { status: 200, body: page } });
+  const gn = `<rss><channel>${item('Wire headline that is long enough - AP News', 'https://news.google.com/rss/articles/ABC?oc=5', pub1, 'snippet')}</channel></rss>`;
+  const fetch2 = mockFetch({ 'https://feed-e/': { status: 200, body: feedXml(pub1) }, 'https://news.google.com/rss/search?q=x': { status: 200, body: gn }, 'https://example-e.com/robots.txt': { status: 404, body: '' }, 'https://example-e.com/news/one': { status: 200, body: page } });
+  const feeds = [{ name: 'E', outlet: 'Outlet E', owner: 'O', url: 'https://feed-e/' }, { name: 'GN', outlet: 'GN', owner: 'O', url: 'https://news.google.com/rss/search?q=x', thinBody: true }];
+  const scorer = createScorer({ client: model(), model: 'claude-sonnet-5-5', now });
+  const first = await runScan({ scorer, fetch: fetch2, now, feeds, model: 'claude-sonnet-5-5', auditSize: 0 });
+  const one = first.rows.find((r) => r.link.endsWith('/one'));
+  const two = first.rows.find((r) => r.link.endsWith('/two'));
+  const wire = first.rows.find((r) => r.link.includes('news.google.com'));
+  assert.deepEqual([one.fp.v, one.fp.source, one.fp.text.length, one.fp.title.length], [1, 'fulltext', 683, 342], 'escalated row: fingerprint of the article text');
+  assert.ok(one.fp.shingles > 50 && one.fp.chars > 500);
+  assert.deepEqual([two.fp.source, two.fp.text.length], ['summary', 683], 'sweep row: fingerprint of the feed summary');
+  assert.deepEqual([wire.fp.source, wire.fp.text, wire.fp.title.length], ['title', null, 342], 'thin row: headline signature only');
+  assert.deepEqual([one.timestampSource, wire.timestampSource], ['feed', 'aggregator']);
+  assert.deepEqual([one.firstSeen, one.firstSeenRun, one.pubDateChanged], [first.run.startedAt, first.run.id, false]);
+  const serialized = JSON.stringify(first.rows);
+  assert.ok(!serialized.includes('session number'), 'no article text anywhere in the rows');
+  assert.ok(!serialized.includes('criticised the council'), 'no summary text either');
+  // Second run an hour later: the publisher re-stamps row one; first sighting is kept.
+  const pub2 = new Date(NOW - 1800e3).toUTCString();
+  const fetch3 = mockFetch({ 'https://feed-e/': { status: 200, body: feedXml(pub2) }, 'https://example-e.com/robots.txt': { status: 404, body: '' }, 'https://example-e.com/news/one': { status: 200, body: page } });
+  const second = await runScan({ scorer, fetch: fetch3, now, feeds: [feeds[0]], model: 'claude-sonnet-5-5', auditSize: 0, priorRuns: [{ id: first.run.id, startedAt: first.run.startedAt, rows: first.rows }] });
+  const one2 = second.rows.find((r) => r.link.endsWith('/one'));
+  assert.deepEqual([one2.firstSeen, one2.firstSeenRun], [first.run.startedAt, first.run.id], 'first sighting never moves');
+  assert.equal(one2.pubDateChanged, true);
+  assert.equal(one2.pubDateFirst, new Date(pub1).toISOString());
+  assert.equal(one2.pubDate, new Date(pub2).toISOString());
+  assert.ok(one2.fulltext.carriedFrom, 'the full-text score was carried');
+  assert.equal(one2.fp.source, 'fulltext', 'the article fingerprint travels with the carried score');
+  assert.equal(one2.fp.text, one.fp.text);
 });

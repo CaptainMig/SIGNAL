@@ -8,7 +8,7 @@
 // data/validation/model-labels-v<N>.json (never served). Refuses to
 // overwrite an existing version: a new draw is a new version.
 import { promises as fs } from 'node:fs';
-import { readLatest, readRecentScans, resolveRuns } from '../pipeline/ledger.js';
+import { readRecentScans, resolveRuns } from '../pipeline/ledger.js';
 import { drawValidationSet, validationPaths, refreshAgreement } from '../pipeline/validation.js';
 
 function arg(name, fallback) {
@@ -39,7 +39,7 @@ if (await exists(paths.versioned(version))) {
   process.exit(1);
 }
 const now = Date.now();
-const runs = resolveRuns(await readRecentScans({ root, now, windowMs: days * 86400e3 }), { latest: await readLatest({ root }) });
+const runs = resolveRuns(await readRecentScans({ root, now, windowMs: days * 86400e3 }));
 const { set, modelLabels, shortfall, strata } = drawValidationSet(runs, { size, seed, version });
 await fs.mkdir(paths.base, { recursive: true });
 await fs.writeFile(paths.versioned(version), JSON.stringify(set, null, 2) + '\n');

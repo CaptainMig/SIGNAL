@@ -1,8 +1,9 @@
 # Schema brief: ledger row v2 and the proposed additions
 
-Status: proposal, 2026-11-24. Nothing below is implemented until the operator
-says so. The current row shape is the baseline; sections 1 to 4 are the
-additions requested, with the constraints they must respect.
+Status: approved 2026-11-24 with two changes (the current view is no longer
+committed, starting now; a limits section), and implemented in the same
+pull request. No public metric is derived from any of it yet: the
+fingerprint and the timestamps are stored, not shown.
 
 ## Baseline: the row today
 
@@ -62,18 +63,43 @@ uses named.
 - Comparison is a later feature, offline over the ledger. The brief commits
   only to what is stored.
 
-Row addition:
+Row addition, as implemented (`pipeline/fingerprint.js`):
 
 ```
 fp: { v: 1, source: 'fulltext' | 'summary' | 'title',
-      text: '<688 chars>' | null, title: '<344 chars>',
+      text: '<683 chars>' | null, title: '<342 chars>' | null,
       shingles: 812, chars: 5210 }
 ```
+
+The hash is xxHash32 of each shingle; the 128 (text) or 64 (headline)
+permutations are affine maps mod 2^32 with constants fixed by the version;
+signatures are base64url of the little-endian 32-bit minima (683 and 342
+characters, not the 688 and 344 first estimated). The article fingerprint
+travels with a carried full-text score; a sweep row's fingerprint is of the
+feed summary and is recomputed when the row is re-swept.
 
 Why this is not publisher content: a MinHash value is the minimum of a hash
 over a set of shingles; it carries no ordering and no recoverable words.
 Two documents with the same fingerprint are near-duplicates, which is the
 whole point.
+
+### Limits of the fingerprint
+
+- MinHash detects verbatim and near-verbatim reuse: syndicated wire copy,
+  a story republished with light edits, a headline rewritten over an
+  unchanged article. Jaccard over word 5-shingles falls quickly as wording
+  changes.
+- It does not detect paraphrase. Two articles that report the same facts
+  in different words score near zero.
+- Therefore low similarity is never evidence of original reporting, and is
+  never to be presented as such. A low score means only that the words
+  differ.
+- A semantic layer (embeddings, which would detect paraphrase at the cost
+  of a model call per row and a provider dependency) is a later, separate
+  decision, not implied by this one.
+- No public metric is derived from the fingerprint yet. Any similarity or
+  origin figure shown on the site is a separate proposal with its own
+  review.
 
 ## 2. Two timestamps, and what hourly scans can and cannot order
 
@@ -85,7 +111,11 @@ Today a row carries only the publisher's `pubDate`. Proposal:
   'aggregator'`) so the two are never compared as equals.
 - `firstSeen`: the `startedAt` of the run that first observed the row id,
   ISO; `firstSeenRun`: that run's id. Carried forward unchanged for the life
-  of the row. Not editable by the publisher.
+  of the row. Not editable by the publisher. Rows first written before this
+  field existed take the hour of the run they were last written in, which
+  is the earliest the ledger can vouch for.
+- `timestampSource`: `feed` when `pubDate` is the publisher's own, or
+  `aggregator` on Google News feeds, where the stamp is Google's.
 - `pubDateChanged`: true when a later sighting of the same id carries a
   different `pubDate` than the first (publishers backdate and re-stamp);
   the first value is kept as `pubDateFirst` when it changes.
@@ -161,23 +191,29 @@ Where it stops being sensible:
 - The directory of scan files (720 per month) is not itself a problem: the
   scan reads only the files inside its window.
 
-Proposal, in order, each a merged PR when its time comes:
+Decisions, in order:
 
-1. Now: nothing. The ledger is well under every limit for the first months.
-2. At about 300 MB of history (roughly month 2): stop committing the
-   per-pack `latest.json` and have `/api/data` build the current view from
-   the latest scan file plus its carried references (the pipeline already
-   does this in `resolveRuns`). That removes the largest growth term and
-   keeps the append-only guarantee, since only deltas are committed.
-3. At about 1 GB, or 12 months, whichever first: move `data/scans/` to a
+1. Done now (operator decision, this PR): the per-pack `latest.json` is no
+   longer committed. The scan job writes `data/pointer.json` (about 3 KB,
+   the latest scan file and the file for every run in the 48-hour window)
+   and carries each pack's scorecards and metro cards inside the scan file
+   as `views`. `/api/data?file=latest` assembles the current view from the
+   latest scan plus the scans its carried references name, keeps it in the
+   function instance while the pointer is unchanged, and serves it with a
+   five-minute edge cache (`s-maxage=300, stale-while-revalidate=3600`).
+   That removes the largest growth term above (100 to 160 MB a month) and
+   keeps the append-only guarantee: only deltas are committed. Expected
+   growth is now 25 to 45 MB a month, so the 1 GB mark moves out to roughly
+   two years.
+2. At about 1 GB, or when a clone takes longer than a minute: move `data/scans/` to a
    separate ledger repository under the same append-only rules, with this
    repository keeping `history.csv`, `stats.csv`, `daily.json` and the
    aggregates. A month's scans can equally be published as one release
    asset per month; both keep every row reachable by `{ id, run }`.
-4. If similarity queries over the fingerprints become routine, index them
+3. If similarity queries over the fingerprints become routine, index them
    outside git (a monthly Parquet or SQLite build from the scans, generated
    by the scan job), never by rewriting the scans.
 
 A repository is a sensible database for this ledger while the whole history
-clones in under a minute and the current view fetches in under a second:
-on the numbers above, about the first year, and longer with step 2.
+clones in under a minute and the current view assembles in under a second:
+with step 1 in place, roughly the first two years on the numbers above.

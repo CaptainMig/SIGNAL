@@ -19,8 +19,10 @@ export default async function handler(req, res) {
   }
   res.setHeader('Content-Type', out.type);
   // The ledger changes hourly; a short edge cache keeps the repository out
-  // of the hot path without serving stale runs.
-  res.setHeader('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=600');
+  // of the hot path without serving stale runs. The built current view is
+  // the expensive one (the latest scan plus every scan its carried
+  // references name), so its edge copy lives longer.
+  res.setHeader('Cache-Control', out.built ? 'public, s-maxage=300, stale-while-revalidate=3600' : 'public, s-maxage=120, stale-while-revalidate=600');
   res.setHeader('X-Signal-Source', out.source);
   return res.status(200).send(out.body);
 }

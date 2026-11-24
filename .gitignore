@@ -5,3 +5,5 @@ dist/
 .env
 .env.*
 .vercel/
+data/latest.json
+data/packs/*/latest.json

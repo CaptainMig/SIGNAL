@@ -13,8 +13,10 @@ test('parseCsv handles quotes, doubled quotes, CRLF, numbers and empties', () =>
   assert.deepEqual(parseCsv('a,b\n'), []);
 });
 
-test('ledger access serves only the three allowed files', async () => {
+test('ledger access serves only the allowed files; the current view is built, never a committed file', async () => {
   assert.deepEqual(Object.keys(ALLOWED), ['latest', 'history', 'aggregate', 'stats', 'daily', 'validation-set', 'validation-agreement']);
+  assert.equal(ALLOWED.latest.built, true);
+  assert.equal(ALLOWED.latest.file, 'pointer.json');
   assert.ok(!Object.values(ALLOWED).some((v) => /model-labels/.test(v.file)), 'the model labels are never served');
   const r = await readLedgerFile('../package', { env: { SIGNAL_DATA_LOCAL: '1' } });
   assert.deepEqual([r.ok, r.status], [false, 404]);
@@ -32,10 +34,10 @@ test('ledger access reads from disk locally and from the repository otherwise', 
     return { ok: true, status: 200, text: async () => '{"x":1}' };
   };
   const env = { VERCEL_GIT_REPO_OWNER: 'Owner', VERCEL_GIT_REPO_SLUG: 'Repo', GITHUB_TOKEN: 'secret' };
-  const remote = await readLedgerFile('latest', { env, fetch });
+  const remote = await readLedgerFile('history', { env, fetch });
   assert.equal(remote.ok, true);
   assert.equal(remote.source, 'github');
-  assert.equal(calls[0].url, 'https://raw.githubusercontent.com/Owner/Repo/main/data/latest.json');
+  assert.equal(calls[0].url, 'https://raw.githubusercontent.com/Owner/Repo/main/data/history.csv');
   assert.equal(calls[0].auth, 'token secret');
 
   const anon = await readLedgerFile('history', { env: {}, fetch: async () => ({ ok: false, status: 404 }) });
@@ -122,4 +124,36 @@ test('method page: the byline section renders with and without coverage data', a
   const html = bylineSection({ summary: { bylines: { rows: 4, withByline: 3, fromFeed: 2, fromArticle: 1, pct: 75, byOutlet: { A: { rows: 4, withByline: 3, fromFeed: 2, fromArticle: 1, pct: 75 } } } } });
   assert.ok(html.includes('3 of 4') && html.includes('75%') && html.includes('<td class="l">A</td>'));
   assert.ok(html.includes('No per-author metric'));
+});
+
+test('the current view is assembled from pointer.json, the latest scan and the scans its carried references name; cached per pointer', async () => {
+  const { buildLatestView } = await import('../api/_ledger.js');
+  const files = {
+    'pointer.json': JSON.stringify({ latest: { id: '2026-11-24T02', startedAt: '2026-11-24T02:00:00Z', file: 'scans/2026-11-24/02.json' }, runs: { '2026-11-24T01': 'scans/2026-11-24/01.json', '2026-11-24T02': 'scans/2026-11-24/02.json' } }),
+    'scans/2026-11-24/02.json': JSON.stringify({ id: '2026-11-24T02', startedAt: '2026-11-24T02:00:00Z', summary: { n: 'nat' }, packs: { national: { n: 'nat' }, regional: { n: 'reg' } }, views: { national: { scorecards: { cards: [] } }, regional: { scorecards: { cards: [] }, metros: { cards: [] } } }, rows: [{ id: 'a', pack: 'national' }, { id: 'c', pack: 'regional' }], carried: [{ id: 'b', run: '2026-11-24T01' }, { id: 'ghost', run: '2026-11-24T00' }] }),
+    'scans/2026-11-24/01.json': JSON.stringify({ id: '2026-11-24T01', rows: [{ id: 'b', pack: 'national' }], carried: [] }),
+  };
+  const calls = [];
+  const fetch = async (url) => {
+    calls.push(url);
+    const key = url.replace(/^.*\/data\//, '');
+    return files[key] ? { ok: true, status: 200, text: async () => files[key] } : { ok: false, status: 404 };
+  };
+  const env = { VERCEL_GIT_REPO_OWNER: 'O', VERCEL_GIT_REPO_SLUG: 'R' };
+  const nat = await buildLatestView({ env, fetch, pack: 'national' });
+  assert.equal(nat.ok, true);
+  const v = JSON.parse(nat.body);
+  assert.deepEqual(v.rows.map((r) => r.id), ['a', 'b']);
+  assert.deepEqual([v.pack, v.summary.n, v.unresolvedCarried, v.id], ['national', 'nat', 1, '2026-11-24T02']);
+  assert.ok(!('rows' in v && 'carried' in v) && !('views' in v) && !('packs' in v), 'the view carries neither the delta bookkeeping nor other packs');
+  assert.ok(v.scorecards && !v.metros);
+  assert.equal(calls.filter((u) => u.endsWith('/00.json')).length, 0, 'a reference to a run outside the pointer is counted, not fetched');
+  const reg = await buildLatestView({ env, fetch, pack: 'regional' });
+  const r = JSON.parse(reg.body);
+  assert.deepEqual([r.rows.map((x) => x.id), r.summary.n, !!r.metros], [['c'], 'reg', true]);
+  const again = await buildLatestView({ env, fetch, pack: 'regional' });
+  assert.match(again.source, /instance cache/);
+  const missing = await buildLatestView({ env, fetch: async () => ({ ok: false, status: 404 }), pack: 'national' });
+  assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'no run recorded yet']);
+  assert.deepEqual((await buildLatestView({ env, fetch, pack: 'nope' })).status, 404);
 });

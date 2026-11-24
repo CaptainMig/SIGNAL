@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HISTORY_COLUMNS, STATS_COLUMNS, appendHistory, appendStats, countHistoryRuns, csvEscape, ledgerPaths, readLatest, readRecentScans, resolveRuns, scanPathFor, toCsvLine, writeLatest, writeScan } from '../pipeline/ledger.js';
+import { HISTORY_COLUMNS, STATS_COLUMNS, appendHistory, appendStats, countHistoryRuns, csvEscape, ledgerPaths, readPointer, readRecentScans, resolveRuns, scanFileRelative, scanPathFor, toCsvLine, writePointer, writeScan } from '../pipeline/ledger.js';
 
 const tmp = () => fs.mkdtemp(path.join(os.tmpdir(), 'signal-ledger-'));
 const run = (startedAt, id = startedAt.slice(0, 13)) => ({ id, startedAt, finishedAt: startedAt, summary: {} });
@@ -85,19 +85,18 @@ test('resolveRuns expands carried references from the named run, then latest, an
   assert.equal(without[0].unresolvedCarried, 1, 'never fabricated');
 });
 
-test('readLatest returns the full view or null', async () => {
+test('pointer.json names the latest scan file and the file for every run in the window; scan paths are relative to data/', async () => {
   const root = await tmp();
-  assert.equal(await readLatest({ root }), null);
-  await writeLatest(run('2026-11-23T04:00:00.000Z'), [{ id: 'x' }], { root });
-  assert.equal((await readLatest({ root })).rows[0].id, 'x');
-});
-
-test('writeLatest overwrites in place', async () => {
-  const root = await tmp();
-  await writeLatest(run('2026-11-23T04:00:00.000Z'), [{ id: 'x' }], { root });
-  await writeLatest(run('2026-11-23T05:00:00.000Z'), [{ id: 'y' }], { root });
-  const latest = JSON.parse(await fs.readFile(ledgerPaths(root).latest, 'utf8'));
-  assert.equal(latest.rows[0].id, 'y');
+  assert.equal(await readPointer({ root }), null);
+  const written = await writeScan(run('2026-11-23T04:00:00.000Z'), [{ id: 'x' }], { root });
+  const rel = scanFileRelative(written, { root });
+  assert.equal(rel, 'scans/2026-11-23/04.json');
+  await writePointer({ latest: { id: '2026-11-23T04', startedAt: '2026-11-23T04:00:00.000Z', file: rel }, runs: { '2026-11-23T04': rel } }, { root });
+  const p = await readPointer({ root });
+  assert.deepEqual(p.latest, { id: '2026-11-23T04', startedAt: '2026-11-23T04:00:00.000Z', file: rel });
+  assert.ok(!('latest' in ledgerPaths(root)), 'no committed current view');
+  const recent = await readRecentScans({ root, now: Date.parse('2026-11-23T05:00:00Z'), windowMs: 86400e3 });
+  assert.equal(recent[0].file, rel, 'readRecentScans reports each run\'s file');
 });
 
 test('stats.csv is a second append-only ledger keyed by run_id; run count comes from history.csv', async () => {

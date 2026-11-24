@@ -13,6 +13,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { extractText } from '../pipeline/extract.js';
 import { EXTRACT_MIN_CHARS, USER_AGENT } from '../pipeline/config.js';
+import { currentViewFromDisk } from '../pipeline/view.js';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -76,7 +77,11 @@ async function pool(items, concurrency, fn) {
 }
 
 export async function main() {
-  const latest = JSON.parse(await fs.readFile(path.join(root, 'data/latest.json'), 'utf8'));
+  const latest = await currentViewFromDisk({ root });
+  if (!latest) {
+    console.log('[probe] no run recorded yet (data/pointer.json missing)');
+    return;
+  }
   const failed = latest.rows.filter((r) => r.fulltextError && !r.fulltext);
   const byOutlet = new Map();
   for (const r of failed) {
