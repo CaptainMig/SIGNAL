@@ -1,7 +1,7 @@
 // Methodology. Verdict definitions and the feed list come from /api/meta,
 // which imports the pipeline's own config, so this page cannot drift from
 // the code that scores.
-import { esc, panelHead, verdictColor, verdictLabel } from './ui.js';
+import { esc, fmt, panelHead, pending, verdictColor, verdictLabel } from './ui.js';
 
 function kappaTable(meta, rows, { withAxes = false } = {}) {
   const verdicts = meta.verdicts.model;
@@ -27,7 +27,7 @@ function validationSection(data) {
 }
 
 export function renderMethod(data) {
-  const { meta } = data;
+  const { meta, latest } = data;
   const defs = meta.verdicts.display.concat(['UNSCORED']).map((v) => `<div class="def"><span class="sw" style="background:${verdictColor(meta, v) || '#8d939e'}"></span><div><div class="mono" style="font-size:11px;letter-spacing:.08em;color:${verdictColor(meta, v)}">${esc(verdictLabel(meta, v))}</div><div class="muted" style="font-size:14px">${esc(meta.verdicts.definitions[v] || '')}</div></div></div>`).join('');
   const feeds = meta.feeds.map((f) => `<tr><td class="l"><div class="name">${esc(f.name)}</div><div class="sub">${esc(f.owner)}</div></td><td class="l mono muted">${esc(f.host)}</td><td class="l">${f.thinBody ? '<span class="muted">HEADLINE ONLY · TONE</span>' : 'FEED SUMMARY · ESCALATES TO FULL TEXT'}</td></tr>`).join('');
   return `<section class="panel full">
