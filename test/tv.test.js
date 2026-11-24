@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIVE_TV_CHANNELS, TV_STORAGE_KEY, channelByName, embedUrl, rememberChannel, rememberedChannel, renderTvSection } from '../site/tv.js';
+import { LIVE_TV_CHANNELS, OFF_STATE, TV_STORAGE_KEY, channelByName, embedUrl, getTv, rememberChannel, rememberedChannel, renderDock, renderTvSection } from '../site/tv.js';
 
 test('channel order: NBC and Bloomberg first, five official channels', () => {
   assert.deepEqual(
@@ -36,4 +36,20 @@ test('the section renders collapsed with no iframe and no YouTube URL until a ta
   assert.ok(!html.includes('youtube.com'));
   assert.ok(html.includes('OFF · TAP A CHANNEL TO START'));
   for (const c of LIVE_TV_CHANNELS) assert.ok(html.includes(`data-tv-channel="${c.name}"`));
+});
+
+test('the dock renders with no iframe and no YouTube URL until a tap; remembered channel is marked; no controller before mount', () => {
+  const html = renderDock(undefined);
+  assert.ok(!html.includes('<iframe'));
+  assert.ok(!html.includes('youtube.com'));
+  assert.ok(html.includes('data-tv-close'));
+  assert.ok(html.includes(OFF_STATE));
+  for (const c of LIVE_TV_CHANNELS) assert.ok(html.includes(`data-tv-channel="${c.name}"`));
+  const store = new Map([[TV_STORAGE_KEY, 'DW News']]);
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  const withMemory = renderDock(storage);
+  assert.ok(withMemory.includes('data-tv-channel="DW News" class="remembered"'));
+  assert.ok(withMemory.includes('Last time: DW News'));
+  assert.ok(!renderTvSection(storage).includes('tv-box'), 'the rail has no stage of its own: the dock is the player');
+  assert.equal(getTv(), null);
 });
