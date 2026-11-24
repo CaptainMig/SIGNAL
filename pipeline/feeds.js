@@ -261,6 +261,7 @@ export async function collectHeadlines({
         // row is scored for tone only, never headline-vs-snippet.
         summary: r.feed.thinBody ? '' : item.summary || '',
         thinBody: !!r.feed.thinBody,
+        authors: item.authors || [],
       });
     }
 

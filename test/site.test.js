@@ -128,3 +128,11 @@ test('trigger route: configured secrets, constant-time token, workflow_dispatch 
   assert.equal(presentedToken({ headers: {}, url: '/?token=q' }, 'x-signal-trigger-token'), 'q');
   assert.equal(presentedToken({ headers: {}, url: '/' }, 'x-signal-trigger-token'), '');
 });
+
+test('method page: the byline section renders with and without coverage data', async () => {
+  const { bylineSection } = await import('../site/method.js');
+  assert.ok(bylineSection(null).includes('PENDING'));
+  const html = bylineSection({ summary: { bylines: { rows: 4, withByline: 3, fromFeed: 2, fromArticle: 1, pct: 75, byOutlet: { A: { rows: 4, withByline: 3, fromFeed: 2, fromArticle: 1, pct: 75 } } } } });
+  assert.ok(html.includes('3 of 4') && html.includes('75%') && html.includes('<td class="l">A</td>'));
+  assert.ok(html.includes('No per-author metric'));
+});
