@@ -14,7 +14,7 @@ test('a locked term is matched only as a whole word, case-insensitively, in pros
   assert.equal(findLockedTerms(`Statement from ${brand.replace(' ', '')} today`).length, 1);
   assert.equal(findLockedTerms(`CBMitAFBVV95cUxQ${four}tVzhVNGlq`).length, 0, 'an opaque token is not the word');
   assert.equal(findLockedTerms(`x${four}y and ${four}1`).length, 0);
-  assert.equal(findLockedTerms(`a clear channel of water`).length, 1, 'the two-word form, whole words');
+  assert.equal(findLockedTerms(`a ${brand.toLowerCase()} of water`).length, 1, 'the two-word form, whole words');
   assert.equal(findLockedTerms(`clearly channelled`).length, 0);
   assert.equal(findLockedTerms('').length, 0);
   assert.deepEqual(findLockedTerms(`line one\nline two ${four}`), [{ term: 0, line: 2 }]);
