@@ -192,3 +192,15 @@ test('a pack with no prior runs: its first run appears on the next request, noth
   const missing = await readDataPath('packs/regional/latest.json', { env: { SIGNAL_DATA_LOCAL: '1', SIGNAL_DATA_DIR: 'data' } });
   assert.deepEqual([missing.ok, missing.status, missing.reason], [false, 404, 'data/packs/regional/latest.json: not found on disk']);
 });
+
+
+test('buildLabel: short sha, branch only when not main, empty without a commit', async () => {
+  const src = await (await import('node:fs/promises')).readFile(new URL('../site/app.js', import.meta.url), 'utf8');
+  const m = src.match(/export function buildLabel\(meta\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'buildLabel is exported');
+  const buildLabel = new Function(`${m[0].replace(/^export /, '')}; return buildLabel;`)();
+  assert.equal(buildLabel({ deployment: { commit: '927a401a2a672289c079a7a47ff621099d6af6a6', ref: 'main' } }), ' · BUILD 927a401');
+  assert.equal(buildLabel({ deployment: { commit: 'abcdef0123456', ref: 'feature' } }), ' · BUILD abcdef0 (feature)');
+  assert.equal(buildLabel({ deployment: { commit: null } }), '');
+  assert.equal(buildLabel({}), '');
+});

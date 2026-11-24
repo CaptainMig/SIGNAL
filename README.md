@@ -278,6 +278,16 @@ first-observed time (`pubDate`, `timestampSource`, `firstSeen`,
 tie rules, the no-new-fetch constraint, the limits of the fingerprint, and
 the growth estimate. No public metric is derived from these fields yet.
 
+## Deployments
+
+Only `main` deploys. `vercel.json`'s `ignoreCommand` skips every build on
+any other branch and skips `main` commits that touch only `data/`, so the
+hourly ledger commits never build. `/api/meta` reports the deployed commit
+(`deployment.commit`, from Vercel's system variables) and the footer shows
+"BUILD <sha>", so a production deployment that lags `main` is visible from
+the site. One Vercel project is attached to the repository; a second
+project doubles every build.
+
 ## The current view is built, not committed
 
 `latest.json` is no longer written. Every run writes `data/pointer.json`
