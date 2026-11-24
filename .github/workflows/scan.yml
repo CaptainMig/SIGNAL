@@ -8,7 +8,10 @@ name: scan
 # file on the default branch. That author must be an account with write access
 # to the repository; a commit under an unlinked or foreign identity leaves the
 # schedule registered but never fired (DEFECTS.md v2-30). Re-commit the cron
-# line from the operator's account after any change to this file. The minute
+# line from the operator's account after any change to this file. This cron
+# is the BACKUP: the primary trigger is an outside scheduler calling the
+# site's /api/trigger route, which dispatches this workflow (DEFECTS.md
+# v2-39). The minute
 # must match SCAN_MINUTE_UTC in pipeline/config.js (the site's NEXT RUN chip
 # reads it). The expression itself was changed once to force GitHub to
 # re-register the schedule (DEFECTS.md v2-37).
@@ -21,9 +24,16 @@ on:
         description: 'Fetch feeds only; score nothing'
         type: boolean
         default: false
+      force:
+        description: 'Run even if the previous run started less than SCAN_MIN_GAP_MINUTES ago'
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       dry_run:
+        type: boolean
+        default: false
+      force:
         type: boolean
         default: false
 
@@ -73,10 +83,12 @@ jobs:
           SIGNAL_FETCH_URL: ${{ vars.SIGNAL_FETCH_URL }}
           SIGNAL_FETCH_TOKEN: ${{ secrets.SIGNAL_FETCH_TOKEN }}
         run: |
+          FORCE=""
+          if [ "${{ inputs.force }}" = "true" ]; then FORCE="--force"; fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            node scripts/scan.js --dry-run --report run-report.md
+            node scripts/scan.js --dry-run $FORCE --report run-report.md
           else
-            node scripts/scan.js --report run-report.md
+            node scripts/scan.js $FORCE --report run-report.md
           fi
           cat run-report.md >> "$GITHUB_STEP_SUMMARY"
 

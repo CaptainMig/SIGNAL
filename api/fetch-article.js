@@ -7,7 +7,7 @@
 // fetchable, so it is never an open proxy; the text goes back to the scan job
 // to be scored and discarded, exactly as the runner's own fetches are. No
 // model is called here and no key is read here.
-import { timingSafeEqual } from 'node:crypto';
+import { tokenMatches } from './_auth.js';
 import { fetchArticle, registrableHost } from '../pipeline/extract.js';
 import { ARTICLE_HOSTS, EXTRACT_TIMEOUT_MS } from '../pipeline/config.js';
 
@@ -17,12 +17,7 @@ export function allowedArticleHost(url, hosts = ARTICLE_HOSTS) {
   return !!host && hosts.includes(host);
 }
 
-export function tokenMatches(given, expected) {
-  if (!given || !expected) return false;
-  const a = Buffer.from(String(given));
-  const b = Buffer.from(String(expected));
-  return a.length === b.length && timingSafeEqual(a, b);
-}
+export { tokenMatches };
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');

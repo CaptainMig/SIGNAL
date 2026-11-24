@@ -30,6 +30,15 @@ import { compareGolden, scoreGoldenSet } from './golden.js';
 
 export const REUSE_WINDOW_HOURS = 48;
 
+// True when the previous run started less than `gapMs` before `now`: the
+// external trigger and the GitHub cron can both fire in one hour, and a
+// second scan would re-score nothing new at full cost.
+export function tooSoon(previousLatest, now, gapMs) {
+  const t = Date.parse(previousLatest?.startedAt || '');
+  if (!Number.isFinite(t) || !(gapMs > 0)) return false;
+  return now - t < gapMs;
+}
+
 export function runIdFor(startedAt) {
   return new Date(startedAt).toISOString().slice(0, 13); // YYYY-MM-DDTHH (UTC)
 }

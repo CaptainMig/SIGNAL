@@ -12,6 +12,7 @@ jobs:
     uses: ./.github/workflows/scan.yml
     with:
       dry_run: false
+      force: true
     secrets: inherit
     permissions:
       contents: write

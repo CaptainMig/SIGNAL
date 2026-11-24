@@ -86,3 +86,45 @@ test('fetch-article route: host allowlist and constant-time token check', async 
   assert.equal(tokenMatches('', 'abc'), false);
   assert.equal(tokenMatches('abc', undefined), false);
 });
+
+test('trigger route: configured secrets, constant-time token, workflow_dispatch call, GitHub errors relayed', async () => {
+  const { createHandler, WORKFLOW_FILE } = await import('../api/trigger.js');
+  const { presentedToken } = await import('../api/_auth.js');
+  const calls = [];
+  const res = () => {
+    const r = { headers: {}, statusCode: null, body: null, setHeader: (k, v) => (r.headers[k] = v), status: (c) => ((r.statusCode = c), r), json: (b) => ((r.body = b), r) };
+    return r;
+  };
+  const gh = (status, text = '') => async (url, opts) => {
+    calls.push({ url, opts });
+    return { status, text: async () => text };
+  };
+  const env = { SIGNAL_TRIGGER_TOKEN: 'shared', SIGNAL_GH_TOKEN: 'ghp_x', SIGNAL_REPO_OWNER: 'CaptainMig', SIGNAL_REPO_NAME: 'SIGNAL' };
+  let r = res();
+  await createHandler({ env: {}, fetch: gh(204) })({ method: 'POST', headers: {}, url: '/api/trigger' }, r);
+  assert.equal(r.statusCode, 503);
+  r = res();
+  await createHandler({ env, fetch: gh(204) })({ method: 'POST', headers: { 'x-signal-trigger-token': 'wrong' }, url: '/api/trigger' }, r);
+  assert.equal(r.statusCode, 401);
+  assert.equal(calls.length, 0, 'GitHub is never called without the shared secret');
+  r = res();
+  await createHandler({ env, fetch: gh(204) })({ method: 'POST', headers: { 'x-signal-trigger-token': 'shared' }, url: '/api/trigger' }, r);
+  assert.equal(r.statusCode, 202);
+  assert.deepEqual([r.body.ok, r.body.dispatched, r.body.workflow, r.body.ref, r.body.force], [true, true, WORKFLOW_FILE, 'main', false]);
+  assert.equal(calls[0].url, 'https://api.github.com/repos/CaptainMig/SIGNAL/actions/workflows/scan.yml/dispatches');
+  assert.equal(calls[0].opts.headers.Authorization, 'Bearer ghp_x');
+  assert.deepEqual(JSON.parse(calls[0].opts.body), { ref: 'main', inputs: { force: 'false' } });
+  r = res();
+  await createHandler({ env, fetch: gh(204) })({ method: 'GET', headers: { authorization: 'Bearer shared' }, url: '/api/trigger?force=1' }, r);
+  assert.deepEqual([r.statusCode, r.body.force], [202, true]);
+  assert.deepEqual(JSON.parse(calls[1].opts.body).inputs, { force: 'true' });
+  r = res();
+  await createHandler({ env, fetch: gh(404, 'Not Found') })({ method: 'GET', headers: {}, url: '/api/trigger?token=shared' }, r);
+  assert.deepEqual([r.statusCode, r.body.ok, r.body.detail], [502, false, 'GitHub HTTP 404: Not Found']);
+  r = res();
+  await createHandler({ env, fetch: gh(204) })({ method: 'DELETE', headers: {}, url: '/api/trigger' }, r);
+  assert.equal(r.statusCode, 405);
+  assert.equal(presentedToken({ headers: { 'x-signal-trigger-token': 'h' }, url: '/?token=q' }, 'x-signal-trigger-token'), 'h', 'the header wins');
+  assert.equal(presentedToken({ headers: {}, url: '/?token=q' }, 'x-signal-trigger-token'), 'q');
+  assert.equal(presentedToken({ headers: {}, url: '/' }, 'x-signal-trigger-token'), '');
+});

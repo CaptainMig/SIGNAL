@@ -307,3 +307,16 @@ test('video pages are never fetched; the remote route is tried when the runner i
   assert.deepEqual(ex.byOutlet['Outlet C'].routes, { vercel: 1 });
   assert.equal(run.summary.escalation.noArticle, 1);
 });
+
+test('tooSoon: a run within the minimum gap of the previous run is skipped unless forced', async () => {
+  const { tooSoon } = await import('../pipeline/run.js');
+  const gap = 40 * 60_000;
+  const t = Date.parse('2026-11-24T01:11:00Z');
+  assert.equal(tooSoon({ startedAt: '2026-11-24T01:09:00Z' }, t, gap), true, '2 minutes after a trigger run');
+  assert.equal(tooSoon({ startedAt: '2026-11-24T00:11:00Z' }, t, gap), false, 'an hour later');
+  assert.equal(tooSoon({ startedAt: '2026-11-24T00:32:00Z' }, t, gap), true, '39 minutes');
+  assert.equal(tooSoon({ startedAt: '2026-11-24T00:31:00Z' }, t, gap), false, '40 minutes: not too soon');
+  assert.equal(tooSoon(null, t, gap), false);
+  assert.equal(tooSoon({ startedAt: 'garbage' }, t, gap), false);
+  assert.equal(tooSoon({ startedAt: '2026-11-24T01:09:00Z' }, t, 0), false);
+});
