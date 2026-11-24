@@ -56,3 +56,14 @@ test('staleness: null under two hours, an age beyond it; the deck banner renders
   const b = staleBanner({ finishedAt: '2026-11-23T20:10:00Z' }, now);
   assert.ok(b.includes('data-stale-banner') && b.includes('LEDGER STALE · LAST RUN FINISHED 7H AGO') && b.includes('15:10 ET'));
 });
+
+test('windowSum reads a stats-only column from the merged row (DEFECTS.md v2-49) and ignores blanks', async () => {
+  const { mergeStats, windowSum } = await import('../site/metrics.js');
+  const now = Date.parse('2026-11-24T02:00:00Z');
+  const history = [{ run_id: 'a', started_at: '2026-11-23T20:00:00Z', esc_provisional_to_misleading: 2 }, { run_id: 'b', started_at: '2026-11-23T21:00:00Z', esc_provisional_to_misleading: '' }];
+  const stats = [{ run_id: 'a', esc_contextual_to_contextual: 6 }, { run_id: 'b', esc_contextual_to_contextual: '4' }];
+  const merged = mergeStats(history, stats);
+  assert.equal(windowSum(merged, 'esc_contextual_to_contextual', 7, now), 10, 'stats-only column, numeric strings included');
+  assert.equal(windowSum(merged, 'esc_provisional_to_misleading', 7, now), 2, 'a blank history cell counts as zero');
+  assert.equal(windowSum(merged, 'nope', 7, now), 0);
+});
