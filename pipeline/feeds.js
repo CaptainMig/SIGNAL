@@ -16,7 +16,6 @@ import {
 } from './config.js';
 import { parseFeed, looksLikeFeed } from './rss.js';
 import { canonicalizeUrl, rowId } from './canonical.js';
-import { hasLockedTerm } from './locked.js';
 
 const MAX_ITEM_AGE_MS = MAX_ITEM_AGE_HOURS * 60 * 60 * 1000;
 
@@ -164,7 +163,7 @@ export async function fetchAllFeeds(feeds, { fetch = globalThis.fetch, timeoutMs
  *             summary, thinBody }], deduped by canonical link, in feed order
  *   feeds — [{ name, owner, url, thinBody, status: 'live'|'stale'|'blocked'|'dead',
  *             httpStatus, reason, ms, fetched, kept, stale, malformed, undated,
- *             dupes, excluded }]  (excluded = locked-term policy, never stored)
+ *             dupes }]
  */
 export async function collectHeadlines({
   feeds = FEEDS,
@@ -195,7 +194,6 @@ export async function collectHeadlines({
       malformed: 0,
       undated: 0,
       dupes: 0,
-      excluded: 0,
     };
     if (r.status === 'error') {
       // A publisher refusing the runner (401/402/403/451) is 'blocked' — a
@@ -218,11 +216,6 @@ export async function collectHeadlines({
       const item = aggregator ? { ...raw, title: stripPublisherSuffix(raw.title) } : raw;
       if (isMalformedTitle(item.title)) {
         stat.malformed++;
-        continue;
-      }
-      // Locked-term policy: the item is never stored, in any field.
-      if (hasLockedTerm(item.title) || hasLockedTerm(item.link) || hasLockedTerm(item.summary)) {
-        stat.excluded++;
         continue;
       }
       const freshness = classifyFreshness(item.pubDate, now);
