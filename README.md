@@ -268,6 +268,14 @@ Feed health distinguishes `live`, `stale` (fetched, nothing fresh),
 dropped) and `dead` (any other failure). `feeds_blocked` is a column in
 `history.csv`.
 
+## Schema brief
+
+`docs/schema-brief.md` holds the ledger row baseline and the proposed
+additions (text fingerprint without text, publisher and first-observed
+timestamps with hourly-resolution tie rules, the no-new-fetch constraint,
+and the growth estimate with the point at which the repository stops being a
+sensible database). Proposals there are not implemented until approved.
+
 ## Ledger row shape
 
 ```jsonc
