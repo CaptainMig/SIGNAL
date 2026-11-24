@@ -57,6 +57,20 @@ async function switchPack(pack) {
   render();
 }
 
+// The deployed build, from /api/meta's deployment record (Vercel's commit
+// variables), so a production deployment lagging main is visible on every
+// page. Nothing is shown when the build is not known (local preview).
+export function buildLabel(meta) {
+  const d = meta?.deployment;
+  if (!d?.commit) return '';
+  return ` · BUILD ${String(d.commit).slice(0, 7)}${d.ref && d.ref !== 'main' ? ` (${d.ref})` : ''}`;
+}
+
+function renderBuild(meta) {
+  const el = document.querySelector('[data-build]');
+  if (el) el.textContent = buildLabel(meta);
+}
+
 function renderPackSwitch(meta, current) {
   const packs = meta?.packs?.length ? meta.packs : [{ key: DEFAULT_PACK, label: 'NATIONAL' }];
   return `<span class="chip packs" role="group" aria-label="Feed pack">PACK ${packs.map((p) => `<button type="button" data-pack="${esc(p.key)}" class="${p.key === current ? 'active' : ''}" aria-pressed="${p.key === current ? 'true' : 'false'}" title="${esc(p.description || '')}">${esc(p.label)}</button>`).join('')}</span>`;
@@ -129,6 +143,7 @@ function render() {
   }
   if (!state.data) return;
   renderChips(state.data);
+  renderBuild(state.data.meta);
   const packLabel = state.data.meta?.packs?.find((p) => p.key === state.pack)?.label;
   document.title = `Signal · ${current.view === 'article' ? 'Article' : ROUTES.find((r) => r.view === current.view)?.label || 'Media Integrity Scanner'}${packLabel && state.pack !== DEFAULT_PACK ? ` · ${packLabel}` : ''}`;
   if (!state.data.latest && current.view !== 'method' && current.view !== 'validate') {
