@@ -1,15 +1,15 @@
 {
-  "asOf": "2026-11-25T04:12:36.849Z",
+  "asOf": "2026-11-25T14:21:30.215Z",
   "windowHours": 24,
   "scored": 391,
-  "total": 552,
-  "meanIntegrity": 77.4,
+  "total": 561,
+  "meanIntegrity": 76.8,
   "medianIntegrity": 80,
-  "meanIntegrityV2": 68.3,
+  "meanIntegrityV2": 67.1,
   "medianIntegrityV2": 74,
-  "scoredAny": 552,
+  "scoredAny": 561,
   "runs": 3,
   "methodology": "v2",
   "source": "ledger",
-  "computedAt": "2026-11-25T04:12:36.969Z"
+  "computedAt": "2026-11-25T14:21:30.358Z"
 }
